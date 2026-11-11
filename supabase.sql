@@ -182,3 +182,36 @@ create policy "Public can delete Parkview layout images"
   using (bucket_id = 'parkview-layouts');
 
 notify pgrst, 'reload schema';
+
+insert into storage.buckets (id, name, public)
+values ('parkview-marker-photos', 'parkview-marker-photos', true)
+on conflict (id) do update set public = true;
+
+drop policy if exists "Public can read Parkview marker photos"
+  on storage.objects;
+create policy "Public can read Parkview marker photos"
+  on storage.objects for select
+  to anon, authenticated
+  using (bucket_id = 'parkview-marker-photos');
+
+drop policy if exists "Public can upload Parkview marker photos"
+  on storage.objects;
+create policy "Public can upload Parkview marker photos"
+  on storage.objects for insert
+  to anon, authenticated
+  with check (bucket_id = 'parkview-marker-photos');
+
+drop policy if exists "Public can update Parkview marker photos"
+  on storage.objects;
+create policy "Public can update Parkview marker photos"
+  on storage.objects for update
+  to anon, authenticated
+  using (bucket_id = 'parkview-marker-photos')
+  with check (bucket_id = 'parkview-marker-photos');
+
+drop policy if exists "Public can delete Parkview marker photos"
+  on storage.objects;
+create policy "Public can delete Parkview marker photos"
+  on storage.objects for delete
+  to anon, authenticated
+  using (bucket_id = 'parkview-marker-photos');

@@ -51,6 +51,7 @@
       let layoutToEdit = null;
       let layoutToDelete = null;
       let markerCloudBaseline = new Map();
+      let markerPhotoMigrationOccurred = false;
       let markerCloudInitialized = false;
       let markerSyncInProgress = false;
       let markerSaveInProgress = false;
@@ -136,8 +137,70 @@
         y: marker.y,
         product: marker.product || '',
         weight: marker.weight || '',
-        location: marker.location || ''
+        location: marker.location || '',
+        serviceDate: marker.serviceDate || '',
+        manufacturingDate: marker.manufacturingDate || '',
+        photos: (Array.isArray(marker.photos) ? marker.photos : []).map((photo) => ({
+          id: photo.id,
+          name: photo.name || 'Marker image',
+          path: photo.path || null
+        }))
       });
+
+      const getMarkerPhotoPath = (photoId) => `${markerCloudSiteId}/${photoId}`;
+      const getMarkerPhotoPublicUrl = (path) =>
+        `${getMarkerCloudRestUrl().replace('/rest/v1', '')}/storage/v1/object/public/parkview-marker-photos/${encodeStoragePath(path)}`;
+
+      const uploadCloudMarkerPhoto = async (photoId, file) => {
+        const path = getMarkerPhotoPath(photoId);
+        const response = await fetch(
+          `${getMarkerCloudRestUrl().replace('/rest/v1', '')}/storage/v1/object/parkview-marker-photos/${encodeStoragePath(path)}`,
+          {
+            method: 'POST',
+            headers: {
+              apikey: markerCloudConfig.anonKey,
+              'Content-Type': file.type || 'application/octet-stream',
+              'x-upsert': 'true'
+            },
+            body: file
+          }
+        );
+        if (!response.ok) throw new Error(`Supabase marker photo upload failed (${response.status}).`);
+        return path;
+      };
+
+      const deleteCloudMarkerPhoto = async (photo) => {
+        if (!photo.path) return;
+        const response = await fetch(
+          `${getMarkerCloudRestUrl().replace('/rest/v1', '')}/storage/v1/object/parkview-marker-photos/${encodeStoragePath(photo.path)}`,
+          {
+            method: 'DELETE',
+            headers: { apikey: markerCloudConfig.anonKey }
+          }
+        );
+        if (!response.ok && response.status !== 404) {
+          throw new Error(`Supabase marker photo delete failed (${response.status}).`);
+        }
+      };
+
+      const migrateLocalMarkerPhotos = async (marker) => {
+        const photos = Array.isArray(marker.photos) ? marker.photos : [];
+        for (const photo of photos) {
+          if (photo.path) continue;
+          try {
+            await openDatabase();
+            const savedPhoto = await getMarkerPhoto(photo.id);
+            if (savedPhoto && savedPhoto.blob) {
+              photo.path = await uploadCloudMarkerPhoto(photo.id, savedPhoto.blob);
+              markerPhotoMigrationOccurred = true;
+            }
+          } catch (error) {
+            console.error('Unable to migrate a local marker photo to shared storage:', error);
+          }
+        }
+        marker.photos = photos;
+        return marker;
+      };
 
       const markerRowsFromMap = (markersMap) => Array.from(markersMap, ([layoutId, markers]) =>
         markers.map((marker) => ({
@@ -295,14 +358,17 @@
             }
           }
           const initialMap = new Map();
-          Object.entries(initialMarkers).forEach(([layoutId, markers]) => {
+          for (const [layoutId, markers] of Object.entries(initialMarkers)) {
             if (!Array.isArray(markers)) throw new Error(`Cloud markers for ${layoutId} have an invalid format.`);
-            initialMap.set(layoutId, markers.map((marker) => {
+            initialMap.set(layoutId, await Promise.all(markers.map(async (marker) => {
               if (!marker || typeof marker.id !== 'string') throw new Error(`A cloud marker for ${layoutId} is invalid.`);
               const localMarker = (localMarkers.get(layoutId) || []).find((item) => item.id === marker.id);
-              return { ...marker, photos: localMarker ? localMarker.photos || [] : [] };
-            }));
-          });
+              return await migrateLocalMarkerPhotos({
+                ...marker,
+                photos: localMarker ? localMarker.photos || [] : []
+              });
+            })));
+          }
           if (!cloudMarkerSnapshotsMatch(markersByLayout, initialMap)) {
             markersByLayout.clear();
             initialMap.forEach((markers, layoutId) => markersByLayout.set(layoutId, markers));
@@ -314,10 +380,11 @@
             markersByLayout.clear();
             initialMap.forEach((markers, layoutId) => markersByLayout.set(layoutId, markers));
             await saveCloudMarkerChanges();
+            markerPhotoMigrationOccurred = false;
           }
         } else {
           const remoteMarkers = new Map();
-          rows.forEach((row) => {
+          for (const row of rows) {
             if (typeof row.layout_id !== 'string' || typeof row.marker_id !== 'string' ||
               !row.marker || typeof row.marker !== 'object' || Array.isArray(row.marker) ||
               row.marker.id !== row.marker_id) {
@@ -325,11 +392,14 @@
             }
             if (!remoteMarkers.has(row.layout_id)) remoteMarkers.set(row.layout_id, []);
             const localMarker = (localMarkers.get(row.layout_id) || []).find((item) => item.id === row.marker_id);
-            remoteMarkers.get(row.layout_id).push({
+            const marker = {
               ...row.marker,
-              photos: localMarker ? localMarker.photos || [] : []
-            });
-          });
+              photos: Array.isArray(row.marker.photos)
+                ? row.marker.photos
+                : localMarker ? localMarker.photos || [] : []
+            };
+            remoteMarkers.get(row.layout_id).push(await migrateLocalMarkerPhotos(marker));
+          }
           if (!cloudMarkerSnapshotsMatch(markersByLayout, remoteMarkers)) {
             markersByLayout.clear();
             remoteMarkers.forEach((markers, layoutId) => markersByLayout.set(layoutId, markers));
@@ -337,6 +407,11 @@
             renderMarkers();
           }
           markerCloudBaseline = cloneCloudBaseline(remoteMarkers);
+          if (markerPhotoMigrationOccurred) {
+            markerCloudBaseline = new Map();
+            await saveCloudMarkerChanges();
+            markerPhotoMigrationOccurred = false;
+          }
           if (rows.length && !siteInitialized) await markCloudSiteInitialized();
         }
         markerCloudInitialized = true;
@@ -536,6 +611,10 @@
             markerPhotoGallery.append(createPhotoCard(photo, cachedUrl));
             return;
           }
+          if (photo.path) {
+            markerPhotoGallery.append(createPhotoCard(photo, getMarkerPhotoPublicUrl(photo.path)));
+            return;
+          }
           const placeholder = document.createElement('div');
           placeholder.className = 'marker-photo-card marker-photo-loading';
           placeholder.textContent = 'Loading image…';
@@ -571,6 +650,8 @@
         document.getElementById('markerProduct').value = marker ? marker.product : '';
         document.getElementById('markerWeight').value = marker ? marker.weight || '' : '';
         document.getElementById('markerLocation').value = marker ? marker.location : '';
+        document.getElementById('markerServiceDate').value = marker ? marker.serviceDate || '' : '';
+        document.getElementById('markerManufacturingDate').value = marker ? marker.manufacturingDate || '' : '';
         document.getElementById('markerDelete').hidden = !marker;
         markerEditor.hidden = false;
         photoLoadToken += 1;
@@ -1156,7 +1237,9 @@
         const details = {
           product: document.getElementById('markerProduct').value.trim(),
           weight: document.getElementById('markerWeight').value.trim(),
-          location: document.getElementById('markerLocation').value.trim()
+          location: document.getElementById('markerLocation').value.trim(),
+          serviceDate: document.getElementById('markerServiceDate').value,
+          manufacturingDate: document.getElementById('markerManufacturingDate').value
         };
         const markerId = editingMarkerId || `marker-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const existingMarker = markers.find((item) => item.id === markerId);
@@ -1175,17 +1258,20 @@
             await openDatabase();
             await saveMarkerPhoto(photo.id, photo.file);
             sessionMarkerPhotos.set(photo.id, photo.url);
-            photos.push({ id: photo.id, name: photo.name });
+            const path = await uploadCloudMarkerPhoto(photo.id, photo.file);
+            photos.push({ id: photo.id, name: photo.name, path });
           } catch (error) {
-            console.error('Unable to save marker photo:', error);
+            console.error('Unable to save and sync marker photo:', error);
             photoStorageFailed = true;
             sessionMarkerPhotos.set(photo.id, photo.url);
-            photos.push({ id: photo.id, name: photo.name });
+            photos.push({ id: photo.id, name: photo.name, path: null });
           }
         }
 
         for (const photoId of removedMarkerPhotoIds) {
           try {
+            const removedPhoto = existingPhotos.find((photo) => photo.id === photoId);
+            if (removedPhoto) await deleteCloudMarkerPhoto(removedPhoto);
             await openDatabase();
             await deleteMarkerPhoto(photoId);
             const cachedUrl = sessionMarkerPhotos.get(photoId);
@@ -1254,6 +1340,7 @@
         try {
           if (markerPhotos.length) await openDatabase();
           for (const photo of markerPhotos) {
+            await deleteCloudMarkerPhoto(photo);
             if (photo.id) await deleteMarkerPhoto(photo.id);
           }
         } catch (error) {
