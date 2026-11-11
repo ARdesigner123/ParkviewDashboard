@@ -24,6 +24,11 @@
       const markersByLayout = new Map();
       const sessionMarkerPhotos = new Map();
       const markerStorageKey = 'mquest-parkview-markers';
+      const markerCloudProjectId = 'parkview-dashboard';
+      const markerCloudConfig = window.PARKVIEW_SUPABASE;
+      const getMarkerCloudRestUrl = () => markerCloudConfig.restUrl.endsWith('/')
+        ? markerCloudConfig.restUrl.slice(0, -1)
+        : markerCloudConfig.restUrl;
       let selectedIndex = 0;
       let zoom = 1;
       let panX = 0;
@@ -35,6 +40,7 @@
       let toastTimer;
       let database = null;
       let databasePromise = null;
+      let markerSyncPromise = Promise.resolve();
       let pendingMarkerPhotos = [];
       let removedMarkerPhotoIds = new Set();
       let photoLoadToken = 0;
@@ -102,6 +108,102 @@
         } catch (error) {
           console.error('Unable to save markers:', error);
           return false;
+        }
+      };
+
+      const saveCloudMarkers = async () => {
+        if (!markerCloudConfig || !markerCloudConfig.restUrl || !markerCloudConfig.anonKey) {
+          throw new Error('Supabase marker sync is not configured.');
+        }
+        const cloudMarkers = Object.fromEntries(
+          Array.from(markersByLayout, ([layoutId, markers]) => [
+            layoutId,
+            markers.map(({ id, x, y, product, weight, location }) => ({
+              id, x, y, product, weight, location
+            }))
+          ])
+        );
+        const response = await fetch(
+          `${getMarkerCloudRestUrl()}/parkview_marker_state?on_conflict=project_id`,
+          {
+            method: 'POST',
+            headers: {
+              apikey: markerCloudConfig.anonKey,
+              'Content-Type': 'application/json',
+              Prefer: 'resolution=merge-duplicates,return=minimal'
+            },
+            body: JSON.stringify({
+              project_id: markerCloudProjectId,
+              markers: cloudMarkers,
+              updated_at: new Date().toISOString()
+            })
+          }
+        );
+        if (!response.ok) throw new Error(`Supabase marker save failed (${response.status}).`);
+      };
+
+      const syncMarkersFromCloud = async () => {
+        if (!markerCloudConfig || !markerCloudConfig.restUrl || !markerCloudConfig.anonKey) {
+          throw new Error('Supabase marker sync is not configured.');
+        }
+        const response = await fetch(
+          `${getMarkerCloudRestUrl()}/parkview_marker_state?project_id=eq.${encodeURIComponent(markerCloudProjectId)}&select=markers`,
+          {
+            headers: {
+              apikey: markerCloudConfig.anonKey
+            }
+          }
+        );
+        if (!response.ok) throw new Error(`Supabase marker load failed (${response.status}).`);
+        const rows = await response.json();
+        const localMarkers = Object.fromEntries(markersByLayout);
+
+        if (!rows.length) {
+          await saveCloudMarkers();
+          return;
+        }
+
+        const remoteMarkers = rows[0].markers;
+        if (!remoteMarkers || typeof remoteMarkers !== 'object' || Array.isArray(remoteMarkers)) {
+          throw new Error('Saved cloud markers have an invalid format.');
+        }
+        const mergedMarkers = {};
+        Object.entries(remoteMarkers).forEach(([layoutId, markers]) => {
+          if (!Array.isArray(markers)) throw new Error(`Cloud markers for ${layoutId} have an invalid format.`);
+          mergedMarkers[layoutId] = markers.map((marker) => {
+            if (!marker || typeof marker.id !== 'string') throw new Error(`A cloud marker for ${layoutId} is invalid.`);
+            const localMarker = (localMarkers[layoutId] || []).find((item) => item.id === marker.id);
+            return { ...marker, photos: localMarker ? localMarker.photos || [] : [] };
+          });
+        });
+
+        let importedLocalMarkers = false;
+        Object.entries(localMarkers).forEach(([layoutId, markers]) => {
+          if (!mergedMarkers[layoutId]) mergedMarkers[layoutId] = [];
+          markers.forEach((marker) => {
+            if (!mergedMarkers[layoutId].some((item) => item.id === marker.id)) {
+              mergedMarkers[layoutId].push(marker);
+              importedLocalMarkers = true;
+            }
+          });
+        });
+
+        markersByLayout.clear();
+        Object.entries(mergedMarkers).forEach(([layoutId, markers]) => markersByLayout.set(layoutId, markers));
+        persistMarkers();
+        renderMarkers();
+        if (importedLocalMarkers) await saveCloudMarkers();
+      };
+
+      const persistMarkersEverywhere = async () => {
+        const localSaved = persistMarkers();
+        if (!localSaved) return { localSaved: false, cloudSaved: false };
+        try {
+          await saveCloudMarkers();
+          return { localSaved: true, cloudSaved: true };
+        } catch (error) {
+          console.error('Unable to sync markers to Supabase:', error);
+          return { localSaved: true, cloudSaved: false };
         }
       };
 
@@ -561,6 +663,7 @@
         event.preventDefault();
         const saveButton = markerEditor.querySelector('.marker-save');
         saveButton.disabled = true;
+        await markerSyncPromise;
         const markers = getCurrentMarkers();
         const details = {
           product: document.getElementById('markerProduct').value.trim(),
@@ -620,13 +723,15 @@
         }
         closeMarkerEditor();
         renderMarkers();
-        const saved = persistMarkers();
-        if (!saved) {
+        const saveResult = await persistMarkersEverywhere();
+        if (!saveResult.localSaved) {
           announce('Marker saved for this session, but its details could not be saved to browser storage.', true);
+        } else if (!saveResult.cloudSaved) {
+          announce('Marker saved on this device, but cloud sync failed. It may not appear on your other devices.', true);
         } else if (photoStorageFailed) {
-          announce('Marker details saved, but the photo is only available for this session.', true);
+          announce('Marker synced. Its photo is only available on this device.', true);
         } else {
-          announce('Marker saved on this layout.');
+          announce('Marker synced across devices.');
         }
         saveButton.disabled = false;
       });
@@ -649,6 +754,7 @@
       }, { passive: false });
       document.getElementById('markerDelete').addEventListener('click', async () => {
         if (!editingMarkerId) return;
+        await markerSyncPromise;
         const markers = getCurrentMarkers();
         const markerIndex = markers.findIndex((marker) => marker.id === editingMarkerId);
         const marker = markers[markerIndex];
@@ -675,8 +781,14 @@
         if (markerIndex !== -1) markers.splice(markerIndex, 1);
         closeMarkerEditor();
         renderMarkers();
-        const saved = persistMarkers();
-        announce(saved ? 'Marker removed from this layout.' : 'Marker removed for this session, but the change could not be saved.', !saved);
+        const saveResult = await persistMarkersEverywhere();
+        if (!saveResult.localSaved) {
+          announce('Marker removed for this session, but the change could not be saved.', true);
+        } else if (!saveResult.cloudSaved) {
+          announce('Marker removed on this device, but the change could not sync to your other devices.', true);
+        } else {
+          announce('Marker removed from this layout on all devices.');
+        }
       });
 
       markerEditor.addEventListener('wheel', (event) => {
@@ -732,4 +844,8 @@
       restoreMarkers();
       selectLayout(0);
       restoreUploads();
+      markerSyncPromise = syncMarkersFromCloud().catch((error) => {
+        console.error('Unable to load shared markers:', error);
+        announce('Could not sync shared markers. Showing markers saved on this device.', true);
+      });
     })();
