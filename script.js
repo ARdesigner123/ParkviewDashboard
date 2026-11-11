@@ -19,13 +19,18 @@
       const photoViewerStage = document.getElementById('photoViewerStage');
       const list = document.getElementById('layoutList');
       const fileInput = document.getElementById('fileInput');
+      const layoutEditInput = document.getElementById('layoutEditInput');
+      const layoutConfirm = document.getElementById('layoutConfirm');
       const toast = document.getElementById('toast');
       const layouts = [...builtInLayouts];
       const markersByLayout = new Map();
       const sessionMarkerPhotos = new Map();
-      const markerStorageKey = 'mquest-parkview-markers';
-      const markerCloudProjectId = 'parkview-dashboard';
       const markerCloudConfig = window.PARKVIEW_SUPABASE;
+      const currentHostname = window.location.hostname.toLowerCase();
+      const markerCloudSiteId = (markerCloudConfig.siteIds || {})[currentHostname] ||
+        currentHostname || 'parkviewdashboard';
+      const legacyMarkerStorageKey = 'mquest-parkview-markers';
+      const markerStorageKey = `${legacyMarkerStorageKey}:${markerCloudSiteId}`;
       const getMarkerCloudRestUrl = () => markerCloudConfig.restUrl.endsWith('/')
         ? markerCloudConfig.restUrl.slice(0, -1)
         : markerCloudConfig.restUrl;
@@ -41,6 +46,16 @@
       let database = null;
       let databasePromise = null;
       let markerSyncPromise = Promise.resolve();
+      let layoutSyncPromise = Promise.resolve();
+      let layoutSyncInProgress = false;
+      let layoutToEdit = null;
+      let layoutToDelete = null;
+      let markerCloudBaseline = new Map();
+      let markerCloudInitialized = false;
+      let markerSyncInProgress = false;
+      let markerSaveInProgress = false;
+      let markerCloudDirty = false;
+      let markerSyncErrorAnnounced = false;
       let pendingMarkerPhotos = [];
       let removedMarkerPhotoIds = new Set();
       let photoLoadToken = 0;
@@ -80,7 +95,11 @@
 
       const restoreMarkers = () => {
         try {
-          const savedMarkers = JSON.parse(localStorage.getItem(markerStorageKey) || '{}');
+          const savedMarkers = JSON.parse(
+            localStorage.getItem(markerStorageKey) ||
+            localStorage.getItem(legacyMarkerStorageKey) ||
+            '{}'
+          );
           if (!savedMarkers || typeof savedMarkers !== 'object' || Array.isArray(savedMarkers)) {
             throw new Error('Saved marker data has an invalid format.');
           }
@@ -111,20 +130,99 @@
         }
       };
 
-      const saveCloudMarkers = async () => {
+      const cloudMarkerData = (marker) => ({
+        id: marker.id,
+        x: marker.x,
+        y: marker.y,
+        product: marker.product || '',
+        weight: marker.weight || '',
+        location: marker.location || ''
+      });
+
+      const markerRowsFromMap = (markersMap) => Array.from(markersMap, ([layoutId, markers]) =>
+        markers.map((marker) => ({
+          site_id: markerCloudSiteId,
+          layout_id: layoutId,
+          marker_id: marker.id,
+          marker: cloudMarkerData(marker)
+        }))
+      ).flat();
+
+      const cloneCloudBaseline = (markersMap) => new Map(
+        Array.from(markersMap, ([layoutId, markers]) => [
+          layoutId,
+          markers.map(cloudMarkerData)
+        ])
+      );
+
+      const cloudMarkerSnapshotsMatch = (left, right) => {
+        const snapshot = (markersMap) => markerRowsFromMap(markersMap)
+          .map(({ layout_id, marker_id, marker }) => ({ layout_id, marker_id, marker }))
+          .sort((a, b) => `${a.layout_id}:${a.marker_id}`.localeCompare(`${b.layout_id}:${b.marker_id}`));
+        return JSON.stringify(snapshot(left)) === JSON.stringify(snapshot(right));
+      };
+
+      const fetchCloudMarkerRows = async () => {
         if (!markerCloudConfig || !markerCloudConfig.restUrl || !markerCloudConfig.anonKey) {
           throw new Error('Supabase marker sync is not configured.');
         }
-        const cloudMarkers = Object.fromEntries(
-          Array.from(markersByLayout, ([layoutId, markers]) => [
-            layoutId,
-            markers.map(({ id, x, y, product, weight, location }) => ({
-              id, x, y, product, weight, location
-            }))
-          ])
-        );
         const response = await fetch(
-          `${getMarkerCloudRestUrl()}/parkview_marker_state?on_conflict=project_id`,
+          `${getMarkerCloudRestUrl()}/parkview_markers?site_id=eq.${encodeURIComponent(markerCloudSiteId)}&select=site_id,layout_id,marker_id,marker`,
+          {
+            headers: { apikey: markerCloudConfig.anonKey }
+          }
+        );
+        if (!response.ok) throw new Error(`Supabase marker load failed (${response.status}).`);
+        const rows = await response.json();
+        if (!Array.isArray(rows)) throw new Error('Saved cloud markers have an invalid format.');
+        return rows;
+      };
+
+      const fetchCloudSiteInitialized = async () => {
+        const query = new URLSearchParams({
+          site_id: `eq.${markerCloudSiteId}`,
+          select: 'site_id'
+        });
+        const response = await fetch(`${getMarkerCloudRestUrl()}/parkview_marker_sites?${query}`, {
+          headers: { apikey: markerCloudConfig.anonKey }
+        });
+        if (!response.ok) throw new Error(`Supabase marker sync status failed (${response.status}).`);
+        const rows = await response.json();
+        if (!Array.isArray(rows)) throw new Error('Saved cloud marker status has an invalid format.');
+        return rows.length > 0;
+      };
+
+      const markCloudSiteInitialized = async () => {
+        const response = await fetch(`${getMarkerCloudRestUrl()}/parkview_marker_sites?on_conflict=site_id`, {
+          method: 'POST',
+          headers: {
+            apikey: markerCloudConfig.anonKey,
+            'Content-Type': 'application/json',
+            Prefer: 'resolution=ignore-duplicates,return=minimal'
+          },
+          body: JSON.stringify({ site_id: markerCloudSiteId })
+        });
+        if (!response.ok) throw new Error(`Supabase marker sync status save failed (${response.status}).`);
+      };
+
+      const fetchLegacyCloudMarkers = async () => {
+        const response = await fetch(
+          `${getMarkerCloudRestUrl()}/parkview_marker_state?project_id=eq.parkview-dashboard&select=markers`,
+          { headers: { apikey: markerCloudConfig.anonKey } }
+        );
+        if (!response.ok) throw new Error(`Legacy marker migration failed (${response.status}).`);
+        const rows = await response.json();
+        if (!Array.isArray(rows) || !rows.length) return null;
+        const legacyMarkers = rows[0].markers;
+        if (!legacyMarkers || typeof legacyMarkers !== 'object' || Array.isArray(legacyMarkers)) {
+          throw new Error('Legacy cloud markers have an invalid format.');
+        }
+        return legacyMarkers;
+      };
+
+      const upsertCloudMarker = async (row) => {
+        const response = await fetch(
+          `${getMarkerCloudRestUrl()}/parkview_markers?on_conflict=site_id,layout_id,marker_id`,
           {
             method: 'POST',
             headers: {
@@ -132,78 +230,149 @@
               'Content-Type': 'application/json',
               Prefer: 'resolution=merge-duplicates,return=minimal'
             },
-            body: JSON.stringify({
-              project_id: markerCloudProjectId,
-              markers: cloudMarkers,
-              updated_at: new Date().toISOString()
-            })
+            body: JSON.stringify(row)
           }
         );
         if (!response.ok) throw new Error(`Supabase marker save failed (${response.status}).`);
       };
 
-      const syncMarkersFromCloud = async () => {
-        if (!markerCloudConfig || !markerCloudConfig.restUrl || !markerCloudConfig.anonKey) {
-          throw new Error('Supabase marker sync is not configured.');
+      const deleteCloudMarker = async (layoutId, markerId) => {
+        const query = new URLSearchParams({
+          site_id: `eq.${markerCloudSiteId}`,
+          layout_id: `eq.${layoutId}`,
+          marker_id: `eq.${markerId}`
+        });
+        const response = await fetch(`${getMarkerCloudRestUrl()}/parkview_markers?${query}`, {
+          method: 'DELETE',
+          headers: { apikey: markerCloudConfig.anonKey }
+        });
+        if (!response.ok) throw new Error(`Supabase marker delete failed (${response.status}).`);
+      };
+
+      const saveCloudMarkerChanges = async () => {
+        const currentRows = markerRowsFromMap(markersByLayout);
+        const currentByKey = new Map(currentRows.map((row) => [
+          `${row.layout_id}\u0000${row.marker_id}`,
+          row
+        ]));
+        const baselineRows = markerRowsFromMap(markerCloudBaseline);
+        const baselineByKey = new Map(baselineRows.map((row) => [
+          `${row.layout_id}\u0000${row.marker_id}`,
+          row
+        ]));
+
+        for (const [key, row] of baselineByKey) {
+          if (!currentByKey.has(key)) await deleteCloudMarker(row.layout_id, row.marker_id);
         }
-        const response = await fetch(
-          `${getMarkerCloudRestUrl()}/parkview_marker_state?project_id=eq.${encodeURIComponent(markerCloudProjectId)}&select=markers`,
-          {
-            headers: {
-              apikey: markerCloudConfig.anonKey
+        for (const [key, row] of currentByKey) {
+          const previous = baselineByKey.get(key);
+          if (!previous || JSON.stringify(previous.marker) !== JSON.stringify(row.marker)) {
+            await upsertCloudMarker(row);
+          }
+        }
+        await markCloudSiteInitialized();
+        markerCloudBaseline = cloneCloudBaseline(markersByLayout);
+      };
+
+      const syncMarkersFromCloud = async () => {
+        if (markerCloudDirty) {
+          await saveCloudMarkerChanges();
+          markerCloudDirty = false;
+        }
+        const [rows, siteInitialized] = await Promise.all([
+          fetchCloudMarkerRows(),
+          fetchCloudSiteInitialized()
+        ]);
+        const localMarkers = new Map(markersByLayout);
+        if (!rows.length && !siteInitialized) {
+          let initialMarkers = Object.fromEntries(localMarkers);
+          let foundLegacyState = false;
+          if (markerCloudSiteId === 'parkviewdashboard') {
+            const legacyMarkers = await fetchLegacyCloudMarkers();
+            if (legacyMarkers) {
+              initialMarkers = legacyMarkers;
+              foundLegacyState = true;
             }
           }
-        );
-        if (!response.ok) throw new Error(`Supabase marker load failed (${response.status}).`);
-        const rows = await response.json();
-        const localMarkers = Object.fromEntries(markersByLayout);
-
-        if (!rows.length) {
-          await saveCloudMarkers();
-          return;
-        }
-
-        const remoteMarkers = rows[0].markers;
-        if (!remoteMarkers || typeof remoteMarkers !== 'object' || Array.isArray(remoteMarkers)) {
-          throw new Error('Saved cloud markers have an invalid format.');
-        }
-        const mergedMarkers = {};
-        Object.entries(remoteMarkers).forEach(([layoutId, markers]) => {
-          if (!Array.isArray(markers)) throw new Error(`Cloud markers for ${layoutId} have an invalid format.`);
-          mergedMarkers[layoutId] = markers.map((marker) => {
-            if (!marker || typeof marker.id !== 'string') throw new Error(`A cloud marker for ${layoutId} is invalid.`);
-            const localMarker = (localMarkers[layoutId] || []).find((item) => item.id === marker.id);
-            return { ...marker, photos: localMarker ? localMarker.photos || [] : [] };
+          const initialMap = new Map();
+          Object.entries(initialMarkers).forEach(([layoutId, markers]) => {
+            if (!Array.isArray(markers)) throw new Error(`Cloud markers for ${layoutId} have an invalid format.`);
+            initialMap.set(layoutId, markers.map((marker) => {
+              if (!marker || typeof marker.id !== 'string') throw new Error(`A cloud marker for ${layoutId} is invalid.`);
+              const localMarker = (localMarkers.get(layoutId) || []).find((item) => item.id === marker.id);
+              return { ...marker, photos: localMarker ? localMarker.photos || [] : [] };
+            }));
           });
-        });
-
-        let importedLocalMarkers = false;
-        Object.entries(localMarkers).forEach(([layoutId, markers]) => {
-          if (!mergedMarkers[layoutId]) mergedMarkers[layoutId] = [];
-          markers.forEach((marker) => {
-            if (!mergedMarkers[layoutId].some((item) => item.id === marker.id)) {
-              mergedMarkers[layoutId].push(marker);
-              importedLocalMarkers = true;
+          if (!cloudMarkerSnapshotsMatch(markersByLayout, initialMap)) {
+            markersByLayout.clear();
+            initialMap.forEach((markers, layoutId) => markersByLayout.set(layoutId, markers));
+            persistMarkers();
+            renderMarkers();
+          }
+          markerCloudBaseline = new Map();
+          if (markerRowsFromMap(initialMap).length || foundLegacyState) {
+            markersByLayout.clear();
+            initialMap.forEach((markers, layoutId) => markersByLayout.set(layoutId, markers));
+            await saveCloudMarkerChanges();
+          }
+        } else {
+          const remoteMarkers = new Map();
+          rows.forEach((row) => {
+            if (typeof row.layout_id !== 'string' || typeof row.marker_id !== 'string' ||
+              !row.marker || typeof row.marker !== 'object' || Array.isArray(row.marker) ||
+              row.marker.id !== row.marker_id) {
+              throw new Error('A saved cloud marker has an invalid format.');
             }
+            if (!remoteMarkers.has(row.layout_id)) remoteMarkers.set(row.layout_id, []);
+            const localMarker = (localMarkers.get(row.layout_id) || []).find((item) => item.id === row.marker_id);
+            remoteMarkers.get(row.layout_id).push({
+              ...row.marker,
+              photos: localMarker ? localMarker.photos || [] : []
+            });
           });
-        });
-
-        markersByLayout.clear();
-        Object.entries(mergedMarkers).forEach(([layoutId, markers]) => markersByLayout.set(layoutId, markers));
-        persistMarkers();
-        renderMarkers();
-        if (importedLocalMarkers) await saveCloudMarkers();
+          if (!cloudMarkerSnapshotsMatch(markersByLayout, remoteMarkers)) {
+            markersByLayout.clear();
+            remoteMarkers.forEach((markers, layoutId) => markersByLayout.set(layoutId, markers));
+            persistMarkers();
+            renderMarkers();
+          }
+          markerCloudBaseline = cloneCloudBaseline(remoteMarkers);
+          if (rows.length && !siteInitialized) await markCloudSiteInitialized();
+        }
+        markerCloudInitialized = true;
       };
 
       const persistMarkersEverywhere = async () => {
         const localSaved = persistMarkers();
         if (!localSaved) return { localSaved: false, cloudSaved: false };
+        markerSaveInProgress = true;
         try {
-          await saveCloudMarkers();
+          await saveCloudMarkerChanges();
+          markerCloudDirty = false;
           return { localSaved: true, cloudSaved: true };
         } catch (error) {
           console.error('Unable to sync markers to Supabase:', error);
+          markerCloudDirty = true;
           return { localSaved: true, cloudSaved: false };
+        } finally {
+          markerSaveInProgress = false;
+        }
+      };
+
+      const refreshSharedMarkers = async () => {
+        if (markerSyncInProgress || markerSaveInProgress || !markerEditor.hidden) return;
+        markerSyncInProgress = true;
+        try {
+          await syncMarkersFromCloud();
+          markerSyncErrorAnnounced = false;
+        } catch (error) {
+          console.error('Unable to sync shared markers:', error);
+          if (!markerCloudInitialized && !markerSyncErrorAnnounced) {
+            announce('Could not sync shared markers. Showing markers saved on this device.', true);
+            markerSyncErrorAnnounced = true;
+          }
+        } finally {
+          markerSyncInProgress = false;
         }
       };
 
@@ -224,6 +393,7 @@
 
       const renderMarkers = () => {
         markerLayer.replaceChildren();
+        if (!layouts.length) return;
         const bounds = getImageBounds();
         if (!bounds) return;
 
@@ -417,6 +587,8 @@
       const renderList = () => {
         list.replaceChildren();
         layouts.forEach((layout, index) => {
+          const row = document.createElement('div');
+          row.className = 'layout-row';
           const item = document.createElement('button');
           item.type = 'button';
           item.className = `layout-item${index === selectedIndex ? ' active' : ''}`;
@@ -435,34 +607,88 @@
           title.textContent = layout.name;
           const meta = document.createElement('span');
           meta.className = 'layout-item-meta';
-          meta.textContent = layout.uploaded ? 'Added image' : `Sheet ${String(index + 1).padStart(2, '0')}`;
+          meta.textContent = layout.uploaded ? 'Added image' : 'Project drawing';
           copy.append(title, meta);
           item.append(thumb, copy);
           item.addEventListener('click', () => selectLayout(index));
-          list.append(item);
+
+          const actions = document.createElement('div');
+          actions.className = 'layout-item-actions';
+          const edit = document.createElement('button');
+          edit.type = 'button';
+          edit.className = 'layout-action';
+          edit.setAttribute('aria-label', `Replace ${layout.name} image`);
+          edit.title = 'Replace image';
+          edit.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>';
+          edit.addEventListener('click', () => {
+            layoutToEdit = layout;
+            layoutEditInput.value = '';
+            layoutEditInput.click();
+          });
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'layout-action delete';
+          remove.setAttribute('aria-label', `Delete ${layout.name}`);
+          remove.title = 'Delete layout';
+          remove.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v7m6-7v7"/></svg>';
+          remove.addEventListener('click', () => {
+            layoutToDelete = layout;
+            document.getElementById('layoutConfirmTitle').textContent = `Delete "${layout.name}"?`;
+            document.getElementById('layoutConfirmMessage').textContent =
+              'This layout and its markers will be removed from this site on all devices.';
+            layoutConfirm.hidden = false;
+            document.getElementById('layoutDeleteCancel').focus();
+          });
+          actions.append(edit, remove);
+          row.append(item, actions);
+          list.append(row);
         });
 
         document.getElementById('layoutCount').textContent =
           `${String(layouts.length).padStart(2, '0')} ${layouts.length === 1 ? 'sheet' : 'sheets'}`;
       };
 
-      const selectLayout = (index) => {
-        if (index < 0 || index >= layouts.length) return;
-        closeMarkerEditor();
-        selectedIndex = index;
-        const layout = layouts[index];
+      const updateSelectedLayout = () => {
+        if (!layouts.length) {
+          selectedIndex = 0;
+          image.removeAttribute('src');
+          image.alt = '';
+          document.getElementById('sheetTitle').textContent = 'No layouts';
+          document.getElementById('sheetType').textContent = 'Add a layout to get started';
+          document.getElementById('sheetCounter').textContent = '00 / 00';
+          document.getElementById('imageCaption').textContent = 'No layouts available';
+          document.getElementById('prevLayout').disabled = true;
+          document.getElementById('nextLayout').disabled = true;
+          markerToggle.disabled = true;
+          renderList();
+          renderMarkers();
+          return;
+        }
+        markerToggle.disabled = false;
+        const layout = layouts[selectedIndex];
         image.src = layout.src;
         image.alt = `Park View ${layout.name.toLowerCase()}`;
         document.getElementById('sheetTitle').textContent = layout.name;
         document.getElementById('sheetType').textContent = layout.uploaded ? 'Added image' : 'Project drawing';
         document.getElementById('sheetCounter').textContent =
-          `${String(index + 1).padStart(2, '0')} / ${String(layouts.length).padStart(2, '0')}`;
+          `${String(selectedIndex + 1).padStart(2, '0')} / ${String(layouts.length).padStart(2, '0')}`;
         document.getElementById('imageCaption').textContent = `Park View · ${layout.name}`;
-        document.getElementById('prevLayout').disabled = index === 0;
-        document.getElementById('nextLayout').disabled = index === layouts.length - 1;
-        resetView();
+        document.getElementById('prevLayout').disabled = selectedIndex === 0;
+        document.getElementById('nextLayout').disabled = selectedIndex === layouts.length - 1;
         renderList();
         renderMarkers();
+      };
+
+      const selectLayout = (index) => {
+        closeMarkerEditor();
+        if (!layouts.length) {
+          updateSelectedLayout();
+          return;
+        }
+        if (index < 0 || index >= layouts.length) return;
+        selectedIndex = index;
+        resetView();
+        updateSelectedLayout();
       };
 
       const zoomAt = (nextZoom, clientX, clientY) => {
@@ -520,6 +746,197 @@
         transaction.onabort = () => reject(transaction.error || new Error('Saving this image was cancelled.'));
       });
 
+      const deleteUpload = (id) => new Promise((resolve, reject) => {
+        const transaction = database.transaction('uploads', 'readwrite');
+        transaction.objectStore('uploads').delete(id);
+        transaction.oncomplete = resolve;
+        transaction.onerror = () => reject(transaction.error || new Error('Could not delete the saved layout image.'));
+        transaction.onabort = () => reject(transaction.error || new Error('Deleting the saved layout image was cancelled.'));
+      });
+
+      const encodeStoragePath = (path) => path.split('/').map(encodeURIComponent).join('/');
+      const getLayoutStoragePath = (layoutId) => `${markerCloudSiteId}/${layoutId}`;
+      const getLayoutPublicUrl = (path, version = '') => {
+        const url = `${getMarkerCloudRestUrl().replace('/rest/v1', '')}/storage/v1/object/public/parkview-layouts/${encodeStoragePath(path)}`;
+        return version ? `${url}?v=${encodeURIComponent(version)}` : url;
+      };
+
+      const uploadCloudLayoutImage = async (layoutId, file) => {
+        const path = getLayoutStoragePath(layoutId);
+        const response = await fetch(
+          `${getMarkerCloudRestUrl().replace('/rest/v1', '')}/storage/v1/object/parkview-layouts/${encodeStoragePath(path)}`,
+          {
+            method: 'POST',
+            headers: {
+              apikey: markerCloudConfig.anonKey,
+              'Content-Type': file.type || 'application/octet-stream',
+              'x-upsert': 'true'
+            },
+            body: file
+          }
+        );
+        if (!response.ok) throw new Error(`Supabase layout image upload failed (${response.status}).`);
+        return path;
+      };
+
+      const saveCloudLayoutState = async (layout, { imageFile = null, deleted = false } = {}) => {
+        let imagePath = layout.imagePath || null;
+        if (imageFile) imagePath = await uploadCloudLayoutImage(layout.id, imageFile);
+        const updatedAt = new Date().toISOString();
+        const response = await fetch(
+          `${getMarkerCloudRestUrl()}/parkview_layouts?on_conflict=site_id,layout_id`,
+          {
+            method: 'POST',
+            headers: {
+              apikey: markerCloudConfig.anonKey,
+              'Content-Type': 'application/json',
+              Prefer: 'resolution=merge-duplicates,return=minimal'
+            },
+            body: JSON.stringify({
+              site_id: markerCloudSiteId,
+              layout_id: layout.id,
+              name: layout.name,
+              is_uploaded: layout.uploaded,
+              deleted,
+              image_path: imagePath,
+              updated_at: updatedAt
+            })
+          }
+        );
+        if (!response.ok) throw new Error(`Supabase layout save failed (${response.status}).`);
+        layout.imagePath = imagePath;
+        layout.updatedAt = updatedAt;
+      };
+
+      const deleteCloudLayoutImage = async (path) => {
+        if (!path) return;
+        const response = await fetch(
+          `${getMarkerCloudRestUrl().replace('/rest/v1', '')}/storage/v1/object/parkview-layouts/${encodeStoragePath(path)}`,
+          {
+            method: 'DELETE',
+            headers: { apikey: markerCloudConfig.anonKey }
+          }
+        );
+        if (!response.ok && response.status !== 404) {
+          throw new Error(`Supabase layout image delete failed (${response.status}).`);
+        }
+      };
+
+      const fetchCloudLayouts = async () => {
+        const response = await fetch(
+          `${getMarkerCloudRestUrl()}/parkview_layouts?site_id=eq.${encodeURIComponent(markerCloudSiteId)}&select=site_id,layout_id,name,is_uploaded,deleted,image_path,updated_at`,
+          { headers: { apikey: markerCloudConfig.anonKey } }
+        );
+        if (!response.ok) throw new Error(`Supabase layouts load failed (${response.status}).`);
+        const rows = await response.json();
+        if (!Array.isArray(rows)) throw new Error('Saved cloud layouts have an invalid format.');
+        return rows;
+      };
+
+      const syncLayoutsFromCloud = async () => {
+        if (layoutSyncInProgress || !markerEditor.hidden) return;
+        layoutSyncInProgress = true;
+        try {
+          const remoteRows = await fetchCloudLayouts();
+          const selectedLayoutId = layouts[selectedIndex] && layouts[selectedIndex].id;
+          let selectedLayoutChanged = false;
+          let structureChanged = false;
+          const knownRemoteLayouts = new Set(remoteRows.map((row) => row.layout_id));
+          for (const row of remoteRows) {
+            if (typeof row.layout_id !== 'string' || typeof row.name !== 'string') {
+              throw new Error('A saved cloud layout has an invalid format.');
+            }
+            const existingIndex = layouts.findIndex((layout) => layout.id === row.layout_id);
+            if (row.deleted) {
+              if (existingIndex !== -1) {
+                removeLayoutLocally(existingIndex);
+                structureChanged = true;
+              }
+              if (row.is_uploaded) {
+                try {
+                  await openDatabase();
+                  await deleteUpload(row.layout_id);
+                } catch (error) {
+                  console.error('Unable to remove a deleted local layout image:', error);
+                }
+              }
+              continue;
+            }
+            const imageUrl = row.image_path ? getLayoutPublicUrl(row.image_path, row.updated_at) : null;
+            if (existingIndex === -1) {
+              if (!row.is_uploaded || !imageUrl) continue;
+              layouts.push({
+                id: row.layout_id,
+                name: row.name,
+                src: imageUrl,
+                type: 'Added image',
+                uploaded: true,
+                imagePath: row.image_path,
+                updatedAt: row.updated_at
+              });
+              structureChanged = true;
+            } else {
+              const layout = layouts[existingIndex];
+              const imageChanged = Boolean(imageUrl &&
+                (layout.imagePath !== row.image_path || layout.updatedAt !== row.updated_at));
+              if (layout.name !== row.name || imageChanged) {
+                if (layout.id === selectedLayoutId) selectedLayoutChanged = true;
+              }
+              layout.name = row.name;
+              layout.imagePath = row.image_path;
+              layout.updatedAt = row.updated_at;
+              if (imageChanged) layout.src = imageUrl;
+            }
+          }
+
+          for (const layout of layouts) {
+            if (knownRemoteLayouts.has(layout.id)) continue;
+            if (layout.uploaded && layout.src.startsWith('blob:')) {
+              const upload = (await getSavedUploads()).find((saved) => saved.id === layout.id);
+              if (upload) await saveCloudLayoutState(layout, { imageFile: upload.blob });
+            }
+          }
+          if (selectedIndex >= layouts.length) selectedIndex = Math.max(0, layouts.length - 1);
+          if (selectedLayoutId && !layouts.some((layout) => layout.id === selectedLayoutId)) {
+            selectLayout(selectedIndex);
+          } else {
+            if (selectedLayoutId) {
+              selectedIndex = layouts.findIndex((layout) => layout.id === selectedLayoutId);
+            }
+            if (selectedLayoutChanged || structureChanged) updateSelectedLayout();
+          }
+        } finally {
+          layoutSyncInProgress = false;
+        }
+      };
+
+      const removeLayoutLocally = (index) => {
+        const [layout] = layouts.splice(index, 1);
+        if (layout && layout.src.startsWith('blob:')) URL.revokeObjectURL(layout.src);
+        if (selectedIndex > index) selectedIndex -= 1;
+        else if (selectedIndex >= layouts.length) selectedIndex = Math.max(0, layouts.length - 1);
+      };
+
+      const replaceLayoutImage = async (layout, file) => {
+        const imagePath = await uploadCloudLayoutImage(layout.id, file);
+        const updatedLayout = { ...layout, imagePath };
+        await saveCloudLayoutState(updatedLayout);
+        layout.imagePath = updatedLayout.imagePath;
+        layout.updatedAt = updatedLayout.updatedAt;
+        if (layout.uploaded) {
+          try {
+            await saveUpload({ id: layout.id, name: layout.name, blob: file, createdAt: Date.now() });
+          } catch (error) {
+            console.error('Unable to cache replaced layout image locally:', error);
+          }
+        }
+        const previousSrc = layout.src;
+        const nextSrc = URL.createObjectURL(file);
+        layout.src = nextSrc;
+        if (previousSrc.startsWith('blob:')) URL.revokeObjectURL(previousSrc);
+        if (layouts[selectedIndex].id === layout.id) selectLayout(selectedIndex);
+      };
+
       const getMarkerPhoto = (id) => new Promise((resolve, reject) => {
         const request = database.transaction('markerPhotos', 'readonly').objectStore('markerPhotos').get(id);
         request.onsuccess = () => resolve(request.result || null);
@@ -547,6 +964,7 @@
           database = await openDatabase();
           const uploads = await getSavedUploads();
           uploads.sort((a, b) => a.createdAt - b.createdAt).forEach((upload) => {
+            if (layouts.some((layout) => layout.id === upload.id)) return;
             layouts.push({
               id: upload.id,
               name: upload.name,
@@ -567,6 +985,7 @@
         const imageFiles = files.filter((file) => file.type.startsWith('image/'));
         const rejectedCount = files.length - imageFiles.length;
         let storageFailureCount = 0;
+        let cloudFailureCount = 0;
         if (files.length === 0) return;
 
         let lastAddedIndex = selectedIndex;
@@ -589,10 +1008,18 @@
             console.error('Unable to save uploaded layout:', error);
             storageFailureCount += 1;
           }
+          try {
+            await saveCloudLayoutState(layout, { imageFile: file });
+          } catch (error) {
+            console.error('Unable to sync uploaded layout:', error);
+            cloudFailureCount += 1;
+          }
         }
         selectLayout(lastAddedIndex);
         if (storageFailureCount) {
           announce(`${imageFiles.length} ${imageFiles.length === 1 ? 'layout was' : 'layouts were'} added for this session; ${storageFailureCount} could not be saved.`, true);
+        } else if (cloudFailureCount) {
+          announce(`${imageFiles.length} ${imageFiles.length === 1 ? 'layout was' : 'layouts were'} added on this device, but ${cloudFailureCount} could not sync to other devices.`, true);
         } else if (imageFiles.length && rejectedCount) {
           announce(`${imageFiles.length} ${imageFiles.length === 1 ? 'layout' : 'layouts'} added; ${rejectedCount} non-image ${rejectedCount === 1 ? 'file was' : 'files were'} skipped.`, true);
         } else if (imageFiles.length) {
@@ -601,6 +1028,67 @@
           announce('Only image files can be added.', true);
         }
         fileInput.value = '';
+      });
+
+      layoutEditInput.addEventListener('change', async () => {
+        const file = layoutEditInput.files && layoutEditInput.files[0];
+        const layout = layoutToEdit;
+        layoutEditInput.value = '';
+        layoutToEdit = null;
+        if (!file || !layout) return;
+        if (!file.type.startsWith('image/')) {
+          announce('Only image files can replace a layout.', true);
+          return;
+        }
+        try {
+          await replaceLayoutImage(layout, file);
+          renderList();
+          announce('Layout image updated on all devices for this site.');
+        } catch (error) {
+          console.error('Unable to replace layout image:', error);
+          announce(error.message || 'Could not update the layout image.', true);
+        }
+      });
+
+      document.getElementById('layoutDeleteCancel').addEventListener('click', () => {
+        layoutConfirm.hidden = true;
+        layoutToDelete = null;
+      });
+      document.getElementById('layoutDeleteConfirm').addEventListener('click', async (event) => {
+        if (!layoutToDelete) return;
+        const deleteButton = event.currentTarget;
+        deleteButton.disabled = true;
+        const layout = layoutToDelete;
+        const layoutIndex = layouts.findIndex((item) => item.id === layout.id);
+        try {
+          await saveCloudLayoutState(layout, { deleted: true });
+          const query = new URLSearchParams({
+            site_id: `eq.${markerCloudSiteId}`,
+            layout_id: `eq.${layout.id}`
+          });
+          const markerResponse = await fetch(`${getMarkerCloudRestUrl()}/parkview_markers?${query}`, {
+            method: 'DELETE',
+            headers: { apikey: markerCloudConfig.anonKey }
+          });
+          if (!markerResponse.ok) throw new Error(`Could not delete the layout markers (${markerResponse.status}).`);
+          await deleteCloudLayoutImage(layout.imagePath);
+          if (layout.uploaded) {
+            await openDatabase();
+            await deleteUpload(layout.id);
+          }
+          markersByLayout.delete(layout.id);
+          persistMarkers();
+          if (layoutIndex !== -1) removeLayoutLocally(layoutIndex);
+          layoutConfirm.hidden = true;
+          layoutToDelete = null;
+          selectLayout(Math.min(selectedIndex, layouts.length - 1));
+          announce('Layout deleted from this site on all devices.');
+        } catch (error) {
+          console.error('Unable to delete layout:', error);
+          announce(error.message || 'Could not delete the layout.', true);
+        } finally {
+          deleteButton.disabled = false;
+        }
       });
 
       document.getElementById('prevLayout').addEventListener('click', () => selectLayout(selectedIndex - 1));
@@ -843,9 +1331,29 @@
       new ResizeObserver(renderMarkers).observe(stage);
       restoreMarkers();
       selectLayout(0);
-      restoreUploads();
-      markerSyncPromise = syncMarkersFromCloud().catch((error) => {
-        console.error('Unable to load shared markers:', error);
-        announce('Could not sync shared markers. Showing markers saved on this device.', true);
+      layoutSyncPromise = restoreUploads().then(() => syncLayoutsFromCloud()).catch((error) => {
+        console.error('Unable to sync shared layouts:', error);
+        announce('Could not sync shared layouts. Showing layouts saved on this device.', true);
+      });
+      markerSyncPromise = refreshSharedMarkers();
+      setInterval(() => {
+        markerSyncPromise = refreshSharedMarkers();
+        layoutSyncPromise = syncLayoutsFromCloud().catch((error) => {
+          console.error('Unable to sync shared layouts:', error);
+        });
+      }, 5000);
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) {
+          markerSyncPromise = refreshSharedMarkers();
+          layoutSyncPromise = syncLayoutsFromCloud().catch((error) => {
+            console.error('Unable to sync shared layouts:', error);
+          });
+        }
+      });
+      window.addEventListener('focus', () => {
+        markerSyncPromise = refreshSharedMarkers();
+        layoutSyncPromise = syncLayoutsFromCloud().catch((error) => {
+          console.error('Unable to sync shared layouts:', error);
+        });
       });
     })();

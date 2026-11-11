@@ -176,6 +176,7 @@
     .layout-item:focus-visible { outline: 3px solid #86c7ff; outline-offset: 2px; }
 
     .add-button svg { width: 17px; height: 17px; }
+    #layoutEditInput { display: none; }
     #fileInput {
       position: absolute;
       width: 1px;
@@ -835,6 +836,7 @@
 
     .layout-item {
       display: flex;
+      position: relative;
       min-height: 58px;
       align-items: center;
       gap: 10px;
@@ -849,6 +851,23 @@
 
     .layout-item:hover { background: #f6f9fc; }
     .layout-item.active { border-color: #b7daf5; background: #f0f8fe; }
+    .layout-row { display: flex; align-items: center; gap: 4px; }
+    .layout-row .layout-item { flex: 1; min-width: 0; }
+    .layout-item-actions { display: flex; flex: 0 0 auto; gap: 2px; }
+    .layout-action {
+      display: grid;
+      width: 27px;
+      height: 30px;
+      place-items: center;
+      border: 0;
+      border-radius: 6px;
+      color: #64748b;
+      background: transparent;
+      cursor: pointer;
+    }
+    .layout-action:hover { color: var(--blue-dark); background: #e8f3fc; }
+    .layout-action.delete:hover { color: #a92330; background: #fff0f0; }
+    .layout-action svg { width: 15px; height: 15px; }
 
     .layout-thumb {
       width: 66px;
@@ -874,6 +893,40 @@
 
     .layout-item-meta { display: block; margin-top: 4px; color: #8a97a8; font-size: 9px; }
     .layout-item.active .layout-item-title { color: var(--blue-dark); }
+
+    .layout-confirm[hidden] { display: none; }
+    .layout-confirm {
+      position: fixed;
+      z-index: 20;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgb(18 31 48 / 42%);
+    }
+    .layout-confirm-panel {
+      width: min(380px, 100%);
+      padding: 22px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: white;
+      box-shadow: 0 18px 48px rgb(18 34 54 / 22%);
+    }
+    .layout-confirm-panel h2 { margin: 0; font-size: 16px; }
+    .layout-confirm-panel p { margin: 10px 0 20px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .layout-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .layout-confirm-actions button {
+      min-height: 34px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: white;
+      cursor: pointer;
+      font: inherit;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    #layoutDeleteConfirm { border-color: #b42332; color: white; background: #b42332; }
 
     .sidebar-bottom {
       flex: 0 0 auto;

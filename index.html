@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f5f7fb">
-  <title>Park View Layout | MQuest</title>
+  <title>Park View Label | MQuest</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -28,11 +28,12 @@
       <section class="page-heading" aria-labelledby="pageTitle">
         <div>
           <p class="eyebrow">Project workspace</p>
-          <h1 id="pageTitle">Park View Layout</h1>
+          <h1 id="pageTitle">Park View Label</h1>
           <p class="heading-subtitle">Browse, inspect and manage your project drawings.</p>
         </div>
         <div class="heading-actions">
           <input id="fileInput" type="file" accept="image/*" multiple aria-label="Add layout images">
+          <input id="layoutEditInput" type="file" accept="image/*" aria-label="Replace layout image">
           <label class="add-button" for="fileInput">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
             Add layout
@@ -143,6 +144,16 @@
         </aside>
       </section>
     </main>
+  </div>
+  <div class="layout-confirm" id="layoutConfirm" hidden role="dialog" aria-modal="true" aria-labelledby="layoutConfirmTitle">
+    <div class="layout-confirm-panel">
+      <h2 id="layoutConfirmTitle">Delete layout?</h2>
+      <p id="layoutConfirmMessage">This layout will be deleted from this site on all devices.</p>
+      <div class="layout-confirm-actions">
+        <button id="layoutDeleteCancel" type="button">Cancel</button>
+        <button id="layoutDeleteConfirm" type="button">Delete layout</button>
+      </div>
+    </div>
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <div class="photo-viewer" id="photoViewer" hidden role="dialog" aria-modal="true" aria-labelledby="photoViewerTitle">
