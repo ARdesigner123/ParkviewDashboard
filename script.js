@@ -397,6 +397,9 @@
           };
           request.onerror = () => reject(request.error || new Error('Could not open local image storage.'));
           request.onblocked = () => reject(new Error('Close other open dashboard tabs to enable image storage.'));
+        }).catch((error) => {
+          databasePromise = null;
+          throw error;
         });
         return databasePromise;
       };
@@ -457,7 +460,6 @@
         }
       };
 
-      document.getElementById('addButton').addEventListener('click', () => fileInput.click());
       fileInput.addEventListener('change', async (event) => {
         const files = Array.from(event.target.files || []);
         const imageFiles = files.filter((file) => file.type.startsWith('image/'));
@@ -478,14 +480,11 @@
           };
           layouts.push(layout);
           lastAddedIndex = layouts.length - 1;
-          if (database) {
-            try {
-              await saveUpload(upload);
-            } catch (error) {
-              console.error('Unable to save uploaded layout:', error);
-              storageFailureCount += 1;
-            }
-          } else {
+          try {
+            await openDatabase();
+            await saveUpload(upload);
+          } catch (error) {
+            console.error('Unable to save uploaded layout:', error);
             storageFailureCount += 1;
           }
         }
