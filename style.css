@@ -176,7 +176,6 @@
     .layout-item:focus-visible { outline: 3px solid #86c7ff; outline-offset: 2px; }
 
     .add-button svg { width: 17px; height: 17px; }
-    #layoutEditInput { display: none; }
     #fileInput {
       position: absolute;
       width: 1px;
@@ -868,6 +867,8 @@
     .layout-action:hover { color: var(--blue-dark); background: #e8f3fc; }
     .layout-action.delete:hover { color: #a92330; background: #fff0f0; }
     .layout-action svg { width: 15px; height: 15px; }
+    .layout-action.rename { display: flex; width: auto; gap: 4px; padding: 0 6px; font-size: 9px; font-weight: 700; }
+    .layout-action.rename svg { width: 13px; height: 13px; }
 
     .layout-thumb {
       width: 66px;
@@ -927,6 +928,19 @@
       font-weight: 700;
     }
     #layoutDeleteConfirm { border-color: #b42332; color: white; background: #b42332; }
+    .layout-rename-field { display: block; margin: 18px 0 6px; color: #435168; font-size: 11px; font-weight: 700; }
+    .layout-rename-input {
+      width: 100%;
+      height: 38px;
+      margin-bottom: 18px;
+      padding: 0 10px;
+      border: 1px solid #dfe6ee;
+      border-radius: 7px;
+      font: inherit;
+      font-size: 12px;
+    }
+    .layout-rename-input:focus { border-color: #73b5e8; outline: 0; box-shadow: 0 0 0 3px rgb(22 119 200 / 10%); }
+    #layoutRenameSave { border-color: var(--blue); color: white; background: var(--blue); }
 
     .sidebar-bottom {
       flex: 0 0 auto;

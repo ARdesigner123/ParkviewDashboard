@@ -33,7 +33,6 @@
         </div>
         <div class="heading-actions">
           <input id="fileInput" type="file" accept="image/*" multiple aria-label="Add layout images">
-          <input id="layoutEditInput" type="file" accept="image/*" aria-label="Replace layout image">
           <label class="add-button" for="fileInput">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
             Add layout
@@ -162,6 +161,17 @@
         <button id="layoutDeleteConfirm" type="button">Delete layout</button>
       </div>
     </div>
+  </div>
+  <div class="layout-confirm" id="layoutRenameDialog" hidden role="dialog" aria-modal="true" aria-labelledby="layoutRenameTitle">
+    <form class="layout-confirm-panel" id="layoutRenameForm">
+      <h2 id="layoutRenameTitle">Rename layout</h2>
+      <label class="layout-rename-field" for="layoutRenameInput">Layout name</label>
+      <input id="layoutRenameInput" class="layout-rename-input" type="text" maxlength="100" required>
+      <div class="layout-confirm-actions">
+        <button id="layoutRenameCancel" type="button">Cancel</button>
+        <button id="layoutRenameSave" type="submit">Save name</button>
+      </div>
+    </form>
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <div class="photo-viewer" id="photoViewer" hidden role="dialog" aria-modal="true" aria-labelledby="photoViewerTitle">

@@ -19,8 +19,10 @@
       const photoViewerStage = document.getElementById('photoViewerStage');
       const list = document.getElementById('layoutList');
       const fileInput = document.getElementById('fileInput');
-      const layoutEditInput = document.getElementById('layoutEditInput');
       const layoutConfirm = document.getElementById('layoutConfirm');
+      const layoutRenameDialog = document.getElementById('layoutRenameDialog');
+      const layoutRenameForm = document.getElementById('layoutRenameForm');
+      const layoutRenameInput = document.getElementById('layoutRenameInput');
       const toast = document.getElementById('toast');
       const layouts = [...builtInLayouts];
       const markersByLayout = new Map();
@@ -48,7 +50,7 @@
       let markerSyncPromise = Promise.resolve();
       let layoutSyncPromise = Promise.resolve();
       let layoutSyncInProgress = false;
-      let layoutToEdit = null;
+      let layoutToRename = null;
       let layoutToDelete = null;
       let markerCloudBaseline = new Map();
       let markerPhotoMigrationOccurred = false;
@@ -695,16 +697,18 @@
 
           const actions = document.createElement('div');
           actions.className = 'layout-item-actions';
-          const edit = document.createElement('button');
-          edit.type = 'button';
-          edit.className = 'layout-action';
-          edit.setAttribute('aria-label', `Replace ${layout.name} image`);
-          edit.title = 'Replace image';
-          edit.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>';
-          edit.addEventListener('click', () => {
-            layoutToEdit = layout;
-            layoutEditInput.value = '';
-            layoutEditInput.click();
+          const rename = document.createElement('button');
+          rename.type = 'button';
+          rename.className = 'layout-action rename';
+          rename.setAttribute('aria-label', `Rename ${layout.name}`);
+          rename.title = 'Rename layout';
+          rename.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg><span>Rename</span>';
+          rename.addEventListener('click', () => {
+            layoutToRename = layout;
+            layoutRenameInput.value = layout.name;
+            layoutRenameDialog.hidden = false;
+            layoutRenameInput.focus();
+            layoutRenameInput.select();
           });
           const remove = document.createElement('button');
           remove.type = 'button';
@@ -720,7 +724,7 @@
             layoutConfirm.hidden = false;
             document.getElementById('layoutDeleteCancel').focus();
           });
-          actions.append(edit, remove);
+          actions.append(rename, remove);
           row.append(item, actions);
           list.append(row);
         });
@@ -998,26 +1002,6 @@
         else if (selectedIndex >= layouts.length) selectedIndex = Math.max(0, layouts.length - 1);
       };
 
-      const replaceLayoutImage = async (layout, file) => {
-        const imagePath = await uploadCloudLayoutImage(layout.id, file);
-        const updatedLayout = { ...layout, imagePath };
-        await saveCloudLayoutState(updatedLayout);
-        layout.imagePath = updatedLayout.imagePath;
-        layout.updatedAt = updatedLayout.updatedAt;
-        if (layout.uploaded) {
-          try {
-            await saveUpload({ id: layout.id, name: layout.name, blob: file, createdAt: Date.now() });
-          } catch (error) {
-            console.error('Unable to cache replaced layout image locally:', error);
-          }
-        }
-        const previousSrc = layout.src;
-        const nextSrc = URL.createObjectURL(file);
-        layout.src = nextSrc;
-        if (previousSrc.startsWith('blob:')) URL.revokeObjectURL(previousSrc);
-        if (layouts[selectedIndex].id === layout.id) selectLayout(selectedIndex);
-      };
-
       const getMarkerPhoto = (id) => new Promise((resolve, reject) => {
         const request = database.transaction('markerPhotos', 'readonly').objectStore('markerPhotos').get(id);
         request.onsuccess = () => resolve(request.result || null);
@@ -1111,24 +1095,56 @@
         fileInput.value = '';
       });
 
-      layoutEditInput.addEventListener('change', async () => {
-        const file = layoutEditInput.files && layoutEditInput.files[0];
-        const layout = layoutToEdit;
-        layoutEditInput.value = '';
-        layoutToEdit = null;
-        if (!file || !layout) return;
-        if (!file.type.startsWith('image/')) {
-          announce('Only image files can replace a layout.', true);
+      layoutRenameForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const layout = layoutToRename;
+        const name = layoutRenameInput.value.trim();
+        if (!layout || !name) {
+          layoutRenameInput.focus();
           return;
         }
+        const saveButton = document.getElementById('layoutRenameSave');
+        saveButton.disabled = true;
         try {
-          await replaceLayoutImage(layout, file);
-          renderList();
-          announce('Layout image updated on all devices for this site.');
+          const updatedLayout = { ...layout, name };
+          await saveCloudLayoutState(updatedLayout);
+          layout.name = updatedLayout.name;
+          layout.imagePath = updatedLayout.imagePath;
+          layout.updatedAt = updatedLayout.updatedAt;
+          let localCacheFailed = false;
+          if (layout.uploaded) {
+            try {
+              await openDatabase();
+              const upload = (await getSavedUploads()).find((item) => item.id === layout.id);
+              if (upload) await saveUpload({ ...upload, name });
+            } catch (error) {
+              console.error('Unable to update the local layout name:', error);
+              localCacheFailed = true;
+            }
+          }
+          layoutRenameDialog.hidden = true;
+          layoutToRename = null;
+          if (layouts[selectedIndex] === layout) updateSelectedLayout();
+          else renderList();
+          announce(localCacheFailed
+            ? 'Layout renamed on other devices, but its local saved name could not be updated.'
+            : 'Layout renamed on all devices for this site.');
         } catch (error) {
-          console.error('Unable to replace layout image:', error);
-          announce(error.message || 'Could not update the layout image.', true);
+          console.error('Unable to rename layout:', error);
+          announce(error.message || 'Could not rename the layout.', true);
+        } finally {
+          saveButton.disabled = false;
         }
+      });
+
+      document.getElementById('layoutRenameCancel').addEventListener('click', () => {
+        layoutRenameDialog.hidden = true;
+        layoutToRename = null;
+      });
+      layoutRenameDialog.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape') return;
+        layoutRenameDialog.hidden = true;
+        layoutToRename = null;
       });
 
       document.getElementById('layoutDeleteCancel').addEventListener('click', () => {
