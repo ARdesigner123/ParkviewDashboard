@@ -1393,7 +1393,8 @@
       }, { passive: false });
 
       stage.addEventListener('pointerdown', (event) => {
-        if (markerMode || event.button !== 0 || zoom <= 1 || event.target.closest('button')) return;
+        if (markerMode || event.button !== 0 || zoom <= 1 ||
+          event.target.closest('button, input, select, textarea, label, .marker-editor')) return;
         drag = { x: event.clientX, y: event.clientY, panX, panY };
         stage.classList.add('is-dragging');
         stage.setPointerCapture(event.pointerId);
