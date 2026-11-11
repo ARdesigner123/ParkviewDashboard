@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f5f7fb">
+  <title>Park View Layout | MQuest</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <img src="images/mquestlogo.png" alt="MQuest — Innovate Enable Empower">
+        <span class="brand-divider" aria-hidden="true"></span>
+        <div>
+          <div class="brand-name">MQuest Company</div>
+          <div class="brand-caption">PROJECT DASHBOARD</div>
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div class="live-status"><span class="status-dot" aria-hidden="true"></span>Workspace ready</div>
+        <div class="avatar" aria-label="MQuest">MQ</div>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="page-heading" aria-labelledby="pageTitle">
+        <div>
+          <p class="eyebrow">Project workspace</p>
+          <h1 id="pageTitle">Park View Layout</h1>
+          <p class="heading-subtitle">Browse, inspect and manage your project drawings.</p>
+        </div>
+        <div class="heading-actions">
+          <input id="fileInput" type="file" accept="image/*" multiple>
+          <button class="add-button" id="addButton" type="button" aria-label="Add layout images">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            Add layout
+          </button>
+        </div>
+      </section>
+
+      <section class="content-grid" aria-label="Park View layout viewer">
+        <section class="viewer-card" aria-label="Layout image">
+          <div class="viewer-toolbar">
+            <div class="sheet-heading">
+              <span class="sheet-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H20v15H5.5A1.5 1.5 0 0 0 4 20.5z"/><path d="M4 5.5v15M8 8h8M8 11h8M8 14h5"/></svg>
+              </span>
+              <div>
+                <div class="sheet-title" id="sheetTitle">Layout 1</div>
+                <div class="sheet-type" id="sheetType">Project drawing</div>
+              </div>
+            </div>
+            <div class="sheet-counter" id="sheetCounter" aria-live="polite">01 / 06</div>
+          </div>
+
+          <div class="plan-stage" id="planStage" aria-label="Layout image viewer">
+            <img class="plan-image" id="planImage" src="parkview/layout1.jpg" alt="Park View layout 1" draggable="false">
+            <div class="stage-shade" aria-hidden="true"></div>
+            <div class="marker-layer" id="markerLayer" aria-label="Layout markers"></div>
+            <div class="zoom-controls" aria-label="Image zoom controls">
+              <button class="icon-button marker-toggle" id="markerToggle" type="button" aria-label="Place marker" aria-pressed="false" title="Place marker">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>
+              </button>
+              <span class="zoom-divider" aria-hidden="true"></span>
+              <button class="icon-button" id="zoomOut" type="button" aria-label="Zoom out" title="Zoom out">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.5 4.5M7.8 10.8h6"/></svg>
+              </button>
+              <span class="zoom-level" id="zoomLevel" aria-live="polite">100%</span>
+              <button class="icon-button" id="zoomIn" type="button" aria-label="Zoom in" title="Zoom in">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.5 4.5M7.8 10.8h6m-3-3v6"/></svg>
+              </button>
+              <button class="icon-button" id="resetZoom" type="button" aria-label="Reset zoom" title="Reset zoom">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10a8 8 0 1 1 1.5 7"/><path d="M4 4v6h6"/></svg>
+              </button>
+            </div>
+            <form class="marker-editor" id="markerEditor" hidden aria-label="Marker details">
+              <div class="marker-editor-content">
+                <div class="marker-editor-heading">
+                  <div>
+                    <h2 id="markerEditorTitle">Add a marker</h2>
+                    <p>Enter details for this location.</p>
+                  </div>
+                  <button class="marker-close" id="markerClose" type="button" aria-label="Close marker form">&times;</button>
+                </div>
+                <label class="marker-field">
+                  <span>Product</span>
+                  <input id="markerProduct" name="product" type="text" placeholder="Enter product">
+                </label>
+                <label class="marker-field">
+                  <span>Weight/Kg</span>
+                  <input id="markerWeight" name="weight" type="number" min="0" step="any" placeholder="Enter weight in kg">
+                </label>
+                <label class="marker-field">
+                  <span>Location</span>
+                  <input id="markerLocation" name="location" type="text" placeholder="Enter location">
+                </label>
+                <div class="marker-photo-field">
+                  <div class="marker-photo-gallery" id="markerPhotoGallery" aria-label="Marker photo previews"></div>
+                  <input class="marker-file-input" id="markerPhoto" name="photo" type="file" accept="image/*" multiple>
+                  <label class="marker-upload-tile" for="markerPhoto">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+                    <span>Add images</span>
+                  </label>
+                </div>
+              </div>
+              <div class="marker-editor-actions">
+                <button class="marker-delete" id="markerDelete" type="button" hidden>Delete</button>
+                <span class="marker-action-spacer"></span>
+                <button class="marker-save" type="submit">Save marker</button>
+              </div>
+            </form>
+            <button class="nav-arrow prev" id="prevLayout" type="button" aria-label="Previous layout">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+            </button>
+            <button class="nav-arrow next" id="nextLayout" type="button" aria-label="Next layout">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+            </button>
+            <div class="image-caption" id="imageCaption">Park View · Layout 1</div>
+          </div>
+
+          <div class="viewer-footer">
+            <div class="viewer-hint">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 11V5a2 2 0 0 1 4 0v5-7a2 2 0 0 1 4 0v8-6a2 2 0 0 1 4 0v9a7 7 0 0 1-7 7h-1.5a6 6 0 0 1-4.8-2.4L3.8 15a2 2 0 0 1 3.2-2.4L9 15"/></svg>
+              Scroll to zoom · Drag to pan
+            </div>
+            <span class="keyboard-hint">← → to navigate</span>
+          </div>
+        </section>
+
+        <aside class="sidebar-card" aria-label="Layout list">
+          <div class="sidebar-heading">
+            <h2>All layouts</h2>
+            <span class="count-badge" id="layoutCount">06 sheets</span>
+          </div>
+          <div class="layout-list" id="layoutList"></div>
+          <div class="sidebar-bottom">
+            <div class="project-label">Current project</div>
+            <div class="project-name">Park View</div>
+            <div class="project-location">Singapore · Site plans</div>
+          </div>
+        </aside>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <div class="photo-viewer" id="photoViewer" hidden role="dialog" aria-modal="true" aria-labelledby="photoViewerTitle">
+    <div class="photo-viewer-panel">
+      <div class="photo-viewer-header">
+        <div>
+          <div class="photo-viewer-eyebrow">Marker image</div>
+          <h2 id="photoViewerTitle">Image preview</h2>
+        </div>
+        <button class="photo-viewer-close" id="photoViewerClose" type="button" aria-label="Close image preview">&times;</button>
+      </div>
+      <div class="photo-viewer-stage" id="photoViewerStage">
+        <img id="photoViewerImage" alt="Full-size marker image">
+      </div>
+      <div class="photo-viewer-toolbar" aria-label="Image zoom controls">
+        <span class="photo-viewer-hint">Scroll to zoom</span>
+        <div class="photo-viewer-zoom">
+          <button class="icon-button" id="photoZoomOut" type="button" aria-label="Zoom out image" title="Zoom out">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.5 4.5M7.8 10.8h6"/></svg>
+          </button>
+          <span class="zoom-level" id="photoZoomLevel">100%</span>
+          <button class="icon-button" id="photoZoomIn" type="button" aria-label="Zoom in image" title="Zoom in">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.5 4.5M7.8 10.8h6m-3-3v6"/></svg>
+          </button>
+          <button class="icon-button" id="photoZoomReset" type="button" aria-label="Reset image zoom" title="Reset zoom">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10a8 8 0 1 1 1.5 7"/><path d="M4 4v6h6"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js" defer></script>
+</body>
+</html>
