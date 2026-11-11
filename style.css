@@ -850,9 +850,9 @@
 
     .layout-item:hover { background: #f6f9fc; }
     .layout-item.active { border-color: #b7daf5; background: #f0f8fe; }
-    .layout-row { display: flex; align-items: center; gap: 4px; }
-    .layout-row .layout-item { flex: 1; min-width: 0; }
-    .layout-item-actions { display: flex; flex: 0 0 auto; gap: 2px; }
+    .layout-row { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; }
+    .layout-row .layout-item { flex: 1 1 100%; min-width: 0; }
+    .layout-item-actions { display: flex; flex: 0 0 100%; justify-content: flex-end; gap: 2px; padding-right: 4px; }
     .layout-action {
       display: grid;
       width: 27px;
@@ -884,12 +884,12 @@
     .layout-item-copy { min-width: 0; flex: 1; }
     .layout-item-title {
       display: block;
-      overflow: hidden;
       color: #344257;
       font-size: 10px;
       font-weight: 700;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+      white-space: normal;
     }
 
     .layout-item-meta { display: block; margin-top: 4px; color: #8a97a8; font-size: 9px; }
