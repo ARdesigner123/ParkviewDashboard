@@ -89,30 +89,42 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10a8 8 0 1 1 1.5 7"/><path d="M4 4v6h6"/></svg>
               </button>
             </div>
-            <form class="marker-editor" id="markerEditor" hidden aria-label="Marker details">
+            <form class="marker-editor" id="markerEditor" hidden aria-label="Device details">
               <div class="marker-editor-content">
                 <div class="marker-editor-heading">
                   <div>
                     <h2 id="markerEditorTitle">Add a marker</h2>
-                    <p>Enter details for this location.</p>
+                    <p>Enter details for this device.</p>
                   </div>
                   <button class="marker-close" id="markerClose" type="button" aria-label="Close marker form">&times;</button>
                 </div>
                 <label class="marker-field">
-                  <span>Product</span>
-                  <input id="markerProduct" name="product" type="text" placeholder="Enter product">
+                  <span>Device ID</span>
+                  <input id="markerDeviceId" name="deviceId" type="text" placeholder="Enter device ID">
+                </label>
+                <label class="marker-field">
+                  <span>Device Name</span>
+                  <input id="markerProduct" name="product" type="text" placeholder="Enter device name">
+                </label>
+                <label class="marker-field">
+                  <span>Device Type</span>
+                  <input id="markerDeviceType" name="deviceType" type="text" placeholder="Enter device type">
+                </label>
+                <label class="marker-field">
+                  <span>Floor Level</span>
+                  <input id="markerFloorLevel" name="floorLevel" type="text" placeholder="Enter floor level">
+                </label>
+                <label class="marker-field">
+                  <span>Venue</span>
+                  <input id="markerLocation" name="location" type="text" placeholder="Enter venue">
+                </label>
+                <label class="marker-field">
+                  <span>Next Inspection Date</span>
+                  <input id="markerServiceDate" name="serviceDate" type="date">
                 </label>
                 <label class="marker-field">
                   <span>Weight/Kg</span>
                   <input id="markerWeight" name="weight" type="number" min="0" step="any" placeholder="Enter weight in kg">
-                </label>
-                <label class="marker-field">
-                  <span>Location</span>
-                  <input id="markerLocation" name="location" type="text" placeholder="Enter location">
-                </label>
-                <label class="marker-field">
-                  <span>Service Date</span>
-                  <input id="markerServiceDate" name="serviceDate" type="date">
                 </label>
                 <label class="marker-field">
                   <span>Manufacturing Date</span>

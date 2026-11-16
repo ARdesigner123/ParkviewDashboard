@@ -268,6 +268,9 @@
         id: marker.id,
         x: marker.x,
         y: marker.y,
+        deviceId: marker.deviceId || '',
+        deviceType: marker.deviceType || '',
+        floorLevel: marker.floorLevel || '',
         product: marker.product || '',
         weight: marker.weight || '',
         location: marker.location || '',
@@ -795,7 +798,10 @@
         removedMarkerPhotoIds = new Set();
         markerPhotoInput.value = '';
         document.getElementById('markerEditorTitle').textContent = marker ? 'Edit marker' : 'Add a marker';
+        document.getElementById('markerDeviceId').value = marker ? marker.deviceId || '' : '';
         document.getElementById('markerProduct').value = marker ? marker.product : '';
+        document.getElementById('markerDeviceType').value = marker ? marker.deviceType || '' : '';
+        document.getElementById('markerFloorLevel').value = marker ? marker.floorLevel || '' : '';
         document.getElementById('markerWeight').value = marker ? marker.weight || '' : '';
         document.getElementById('markerLocation').value = marker ? marker.location : '';
         document.getElementById('markerServiceDate').value = marker ? marker.serviceDate || '' : '';
@@ -1772,7 +1778,10 @@
         await markerSyncPromise;
         const markers = getCurrentMarkers();
         const details = {
+          deviceId: document.getElementById('markerDeviceId').value.trim(),
           product: document.getElementById('markerProduct').value.trim(),
+          deviceType: document.getElementById('markerDeviceType').value.trim(),
+          floorLevel: document.getElementById('markerFloorLevel').value.trim(),
           weight: document.getElementById('markerWeight').value.trim(),
           location: document.getElementById('markerLocation').value.trim(),
           serviceDate: document.getElementById('markerServiceDate').value,
