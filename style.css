@@ -123,9 +123,9 @@
       gap: 18px;
     }
 
-    .project-title-row { display: flex; align-items: center; gap: 7px; }
+    .project-title-row { display: flex; align-items: center; gap: 5px; }
 
-    .project-rename {
+    .project-rename, .project-delete {
       display: grid;
       width: 30px;
       height: 30px;
@@ -138,8 +138,14 @@
     }
 
     .project-rename:hover { border-color: #d7e8f6; color: var(--blue-dark); background: #edf6fd; }
-    .project-rename:focus-visible, #projectSelect:focus-visible { outline: 3px solid #86c7ff; outline-offset: 2px; }
-    .project-rename svg { width: 15px; height: 15px; }
+    .project-delete { color: #a76a70; }
+    .project-delete:hover:not(:disabled) { border-color: #f0d7d7; color: #a92330; background: #fff3f3; }
+    .project-delete:disabled { color: #c3cad3; cursor: not-allowed; }
+    .project-rename:focus-visible, .project-delete:focus-visible, #projectSelect:focus-visible {
+      outline: 3px solid #86c7ff;
+      outline-offset: 2px;
+    }
+    .project-rename svg, .project-delete svg { width: 15px; height: 15px; }
 
     .eyebrow {
       margin: 0 0 5px;

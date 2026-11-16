@@ -51,8 +51,15 @@
           if (existing) {
             existing.name = project.name;
             existing.updatedAt = project.updatedAt;
+            existing.deleted = project.deleted === true;
           } else {
-            projects.push({ id: project.id, name: project.name, updatedAt: project.updatedAt, layouts: [] });
+            projects.push({
+              id: project.id,
+              name: project.name,
+              updatedAt: project.updatedAt,
+              deleted: project.deleted === true,
+              layouts: []
+            });
           }
         });
       } catch (error) {
@@ -64,7 +71,9 @@
       } catch (error) {
         console.error('Unable to restore the active project:', error);
       }
-      let activeProject = projects.find((project) => project.id === savedActiveProjectId) || projects[0];
+      let activeProject = projects.find((project) =>
+        project.id === savedActiveProjectId && !project.deleted
+      ) || projects.find((project) => !project.deleted) || projects[0];
       let layouts = activeProject.layouts;
       const getMarkerCloudRestUrl = () => markerCloudConfig.restUrl.endsWith('/')
         ? markerCloudConfig.restUrl.slice(0, -1)
@@ -88,6 +97,7 @@
       let projectCloudSyncAvailable = false;
       let layoutToRename = null;
       let projectToRename = null;
+      let projectToDelete = null;
       let layoutToDelete = null;
       let pinch = null;
       const activePointers = new Map();
@@ -118,12 +128,30 @@
         projects.find((project) => project.id !== defaultProjectId && layoutId.startsWith(`${project.id}--`)) ||
         projects[0];
 
+      const getActiveProjects = () => projects.filter((project) => !project.deleted);
+
+      const ensureActiveProject = () => {
+        if (getActiveProjects().length) return;
+        const defaultProject = projects.find((project) => project.id === defaultProjectId);
+        if (defaultProject) {
+          defaultProject.deleted = false;
+          defaultProject.updatedAt = new Date().toISOString();
+          return;
+        }
+        projects.unshift({
+          id: defaultProjectId,
+          name: 'Park View Label',
+          layouts: [...builtInLayouts]
+        });
+      };
+
       const persistProjects = () => {
         try {
-          localStorage.setItem(projectStorageKey, JSON.stringify(projects.map(({ id, name, updatedAt }) => ({
+          localStorage.setItem(projectStorageKey, JSON.stringify(projects.map(({ id, name, updatedAt, deleted }) => ({
             id,
             name,
-            updatedAt
+            updatedAt,
+            deleted: deleted === true
           }))));
           return true;
         } catch (error) {
@@ -133,9 +161,10 @@
       };
 
       const updateProjectControls = () => {
+        ensureActiveProject();
         const projectSelect = document.getElementById('projectSelect');
         projectSelect.replaceChildren();
-        projects.forEach((project) => {
+        getActiveProjects().forEach((project) => {
           const option = document.createElement('option');
           option.value = project.id;
           option.textContent = project.name;
@@ -147,13 +176,20 @@
         const renameButton = document.getElementById('projectRename');
         renameButton.setAttribute('aria-label', `Rename ${activeProject.name}`);
         renameButton.title = `Rename ${activeProject.name}`;
+        const deleteButton = document.getElementById('projectDelete');
+        const cannotDeleteLastProject = getActiveProjects().length <= 1;
+        deleteButton.disabled = cannotDeleteLastProject;
+        deleteButton.setAttribute('aria-label', `Delete ${activeProject.name}`);
+        deleteButton.title = cannotDeleteLastProject
+          ? 'At least one project must remain'
+          : `Delete ${activeProject.name}`;
         document.querySelector('.sidebar-bottom .project-name').textContent = activeProject.name;
         document.querySelector('.sidebar-bottom .project-location').textContent =
           `${layouts.length} ${layouts.length === 1 ? 'layout' : 'layouts'} · Project workspace`;
       };
 
       const selectProject = (projectId) => {
-        const project = projects.find((item) => item.id === projectId);
+        const project = projects.find((item) => item.id === projectId && !item.deleted);
         if (!project || project === activeProject) return;
         closeMarkerEditor();
         activeProject = project;
@@ -407,6 +443,21 @@
           headers: { apikey: markerCloudConfig.anonKey }
         });
         if (!response.ok) throw new Error(`Supabase marker delete failed (${response.status}).`);
+      };
+
+      const fetchCloudMarkersForLayout = async (layoutId) => {
+        const query = new URLSearchParams({
+          site_id: `eq.${markerCloudSiteId}`,
+          layout_id: `eq.${layoutId}`,
+          select: 'marker_id,marker'
+        });
+        const response = await fetch(`${getMarkerCloudRestUrl()}/parkview_markers?${query}`, {
+          headers: { apikey: markerCloudConfig.anonKey }
+        });
+        if (!response.ok) throw new Error(`Could not load markers for layout ${layoutId} (${response.status}).`);
+        const rows = await response.json();
+        if (!Array.isArray(rows)) throw new Error(`Cloud markers for layout ${layoutId} have an invalid format.`);
+        return rows;
       };
 
       const saveCloudMarkerChanges = async () => {
@@ -815,6 +866,7 @@
           remove.title = 'Delete layout';
           remove.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v7m6-7v7"/></svg>';
           remove.addEventListener('click', () => {
+            projectToDelete = null;
             layoutToDelete = layout;
             document.getElementById('layoutConfirmTitle').textContent = `Delete "${layout.name}"?`;
             document.getElementById('layoutConfirmMessage').textContent =
@@ -1063,15 +1115,121 @@
             site_id: markerCloudSiteId,
             project_id: project.id,
             name: project.name,
+            deleted: project.deleted === true,
             updated_at: project.updatedAt || new Date().toISOString()
           })
         });
         if (!response.ok) throw new Error(`Supabase project save failed (${response.status}).`);
       };
 
+      const deleteProjectData = async (project) => {
+        await layoutSyncPromise;
+        await markerSyncPromise;
+        const cloudLayouts = await fetchCloudLayouts();
+        const layoutsToDelete = new Map(project.layouts.map((layout) => [layout.id, { ...layout }]));
+        cloudLayouts.forEach((row) => {
+          if (getProjectForLayoutId(row.layout_id) !== project) return;
+          const layout = layoutsToDelete.get(row.layout_id) || {
+            id: row.layout_id,
+            name: row.name,
+            uploaded: row.is_uploaded,
+            src: '',
+            imagePath: row.image_path,
+            updatedAt: row.updated_at
+          };
+          layout.imagePath = row.image_path;
+          layout.uploaded = row.is_uploaded;
+          layoutsToDelete.set(row.layout_id, layout);
+        });
+
+        const localPhotos = [];
+        for (const layout of layoutsToDelete.values()) {
+          const remoteMarkers = await fetchCloudMarkersForLayout(layout.id);
+          const layoutMarkers = markersByLayout.get(layout.id) || [];
+          const layoutLocalPhotos = layoutMarkers.flatMap((marker) => Array.isArray(marker.photos)
+            ? marker.photos
+            : marker.photoId ? [{ id: marker.photoId, name: marker.photoName || 'Saved image' }] : []);
+          localPhotos.push(...layoutLocalPhotos);
+          const cloudPhotos = remoteMarkers.flatMap((row) => {
+            const marker = row.marker || {};
+            return Array.isArray(marker.photos)
+              ? marker.photos
+              : marker.photoId ? [{ id: marker.photoId, name: marker.photoName || 'Saved image' }] : [];
+          });
+          const photosById = new Map([...layoutLocalPhotos, ...cloudPhotos]
+            .filter((photo) => photo && (photo.id || photo.path))
+            .map((photo) => [photo.id || photo.path, photo]));
+          for (const photo of photosById.values()) await deleteCloudMarkerPhoto(photo);
+
+          await saveCloudLayoutState(layout, { deleted: true });
+          const markerQuery = new URLSearchParams({
+            site_id: `eq.${markerCloudSiteId}`,
+            layout_id: `eq.${layout.id}`
+          });
+          const markerResponse = await fetch(`${getMarkerCloudRestUrl()}/parkview_markers?${markerQuery}`, {
+            method: 'DELETE',
+            headers: { apikey: markerCloudConfig.anonKey }
+          });
+          if (!markerResponse.ok) throw new Error(`Could not delete markers for ${layout.name} (${markerResponse.status}).`);
+          await deleteCloudLayoutImage(layout.imagePath);
+        }
+
+        const deletedProject = {
+          ...project,
+          deleted: true,
+          updatedAt: new Date().toISOString()
+        };
+        await saveCloudProject(deletedProject);
+        project.deleted = true;
+        project.updatedAt = deletedProject.updatedAt;
+        let localCleanupFailed = false;
+        try {
+          if (layoutsToDelete.size || localPhotos.length) await openDatabase();
+          for (const layout of layoutsToDelete.values()) {
+            if (layout.uploaded) await deleteUpload(layout.id);
+          }
+          for (const photo of localPhotos) {
+            if (photo.id) await deleteMarkerPhoto(photo.id);
+          }
+        } catch (error) {
+          console.error('Unable to remove the deleted project from local image storage:', error);
+          localCleanupFailed = true;
+        }
+        for (const photo of localPhotos) {
+          const cachedUrl = sessionMarkerPhotos.get(photo.id);
+          if (cachedUrl) URL.revokeObjectURL(cachedUrl);
+          sessionMarkerPhotos.delete(photo.id);
+        }
+        for (const layout of layoutsToDelete.values()) {
+          if (layout.src && layout.src.startsWith('blob:')) URL.revokeObjectURL(layout.src);
+          markersByLayout.delete(layout.id);
+          markerCloudBaseline.delete(layout.id);
+        }
+        const projectIndex = projects.indexOf(project);
+        if (projectIndex !== -1) projects.splice(projectIndex, 1);
+        const markersSavedLocally = persistMarkers();
+        const projectsSavedLocally = persistProjects();
+        activeProject = getActiveProjects()[0];
+        layouts = activeProject.layouts;
+        selectedIndex = 0;
+        resetView();
+        try {
+          localStorage.setItem(activeProjectStorageKey, activeProject.id);
+        } catch (error) {
+          console.error('Unable to remember the active project:', error);
+          localCleanupFailed = true;
+        }
+        updateSelectedLayout();
+        if (!projectsSavedLocally || !markersSavedLocally || localCleanupFailed) {
+          announce('Project deleted from this site. Some browser data could not be removed.', true);
+        } else {
+          announce(`Project "${project.name}" and its layouts were deleted from this site.`);
+        }
+      };
+
       const fetchCloudProjects = async () => {
         const response = await fetch(
-          `${getMarkerCloudRestUrl()}/parkview_projects?site_id=eq.${encodeURIComponent(markerCloudSiteId)}&select=project_id,name,updated_at`,
+          `${getMarkerCloudRestUrl()}/parkview_projects?site_id=eq.${encodeURIComponent(markerCloudSiteId)}&select=project_id,name,deleted,updated_at`,
           { headers: { apikey: markerCloudConfig.anonKey } }
         );
         if (!response.ok) throw new Error(`Supabase projects load failed (${response.status}).`);
@@ -1096,16 +1254,31 @@
               const localIsNewer = Date.parse(existing.updatedAt || '') > Date.parse(row.updated_at || '');
               if (!localIsNewer) {
                 existing.name = row.name;
+                existing.deleted = row.deleted === true;
                 existing.updatedAt = row.updated_at;
               }
             } else {
-              projects.push({ id: row.project_id, name: row.name, updatedAt: row.updated_at, layouts: [] });
+              projects.push({
+                id: row.project_id,
+                name: row.name,
+                updatedAt: row.updated_at,
+                deleted: row.deleted === true,
+                layouts: []
+              });
             }
           });
           for (const project of projects) {
             const remoteProject = remoteProjectsById.get(project.id);
             const localIsNewer = remoteProject && Date.parse(project.updatedAt || '') > Date.parse(remoteProject.updated_at || '');
             if (!remoteProject || localIsNewer) await saveCloudProject(project);
+          }
+          ensureActiveProject();
+          if (activeProject.deleted) {
+            activeProject = getActiveProjects()[0];
+            layouts = activeProject.layouts;
+            selectedIndex = 0;
+            resetView();
+            updateSelectedLayout();
           }
           if (!persistProjects()) throw new Error('Project names could not be saved in browser storage.');
           updateProjectControls();
@@ -1132,6 +1305,13 @@
             const project = getProjectForLayoutId(row.layout_id);
             const projectLayouts = project.layouts;
             const existingIndex = projectLayouts.findIndex((layout) => layout.id === row.layout_id);
+            if (project.deleted) {
+              if (existingIndex !== -1) {
+                const [removedLayout] = projectLayouts.splice(existingIndex, 1);
+                if (removedLayout.src.startsWith('blob:')) URL.revokeObjectURL(removedLayout.src);
+              }
+              continue;
+            }
             if (row.deleted) {
               if (existingIndex !== -1) {
                 if (project === activeProject) {
@@ -1237,6 +1417,7 @@
           const uploads = await getSavedUploads();
           uploads.sort((a, b) => a.createdAt - b.createdAt).forEach((upload) => {
             const project = getProjectForLayoutId(upload.id);
+            if (project.deleted) return;
             if (project.layouts.some((layout) => layout.id === upload.id)) return;
             project.layouts.push({
               id: upload.id,
@@ -1357,6 +1538,21 @@
         layoutRenameInput.select();
       });
 
+      document.getElementById('projectDelete').addEventListener('click', () => {
+        if (getActiveProjects().length <= 1) {
+          announce('At least one project must remain. Create another project before deleting this one.', true);
+          return;
+        }
+        projectToDelete = activeProject;
+        layoutToDelete = null;
+        document.getElementById('layoutConfirmTitle').textContent = `Delete "${activeProject.name}"?`;
+        document.getElementById('layoutConfirmMessage').textContent =
+          'This project, all of its layouts, markers and images will be deleted from this site on all devices.';
+        document.getElementById('layoutDeleteConfirm').textContent = 'Delete project';
+        layoutConfirm.hidden = false;
+        document.getElementById('layoutDeleteCancel').focus();
+      });
+
       layoutRenameForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (projectToRename) {
@@ -1448,8 +1644,35 @@
       document.getElementById('layoutDeleteCancel').addEventListener('click', () => {
         layoutConfirm.hidden = true;
         layoutToDelete = null;
+        projectToDelete = null;
+        document.getElementById('layoutDeleteConfirm').textContent = 'Delete layout';
       });
       document.getElementById('layoutDeleteConfirm').addEventListener('click', async (event) => {
+        if (projectToDelete) {
+          const deleteButton = event.currentTarget;
+          const project = projectToDelete;
+          if (getActiveProjects().length <= 1) {
+            layoutConfirm.hidden = true;
+            projectToDelete = null;
+            deleteButton.textContent = 'Delete layout';
+            updateProjectControls();
+            announce('At least one project must remain.', true);
+            return;
+          }
+          deleteButton.disabled = true;
+          try {
+            await deleteProjectData(project);
+            layoutConfirm.hidden = true;
+            projectToDelete = null;
+            deleteButton.textContent = 'Delete layout';
+          } catch (error) {
+            console.error('Unable to delete project:', error);
+            announce(error.message || 'Could not delete the project. Its data has not been fully removed.', true);
+          } finally {
+            deleteButton.disabled = false;
+          }
+          return;
+        }
         if (!layoutToDelete) return;
         const deleteButton = event.currentTarget;
         deleteButton.disabled = true;

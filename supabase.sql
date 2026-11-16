@@ -113,10 +113,14 @@ create table if not exists public.parkview_projects (
   site_id text not null,
   project_id text not null,
   name text not null,
+  deleted boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   primary key (site_id, project_id)
 );
+
+alter table public.parkview_projects
+  add column if not exists deleted boolean not null default false;
 
 alter table public.parkview_projects enable row level security;
 
