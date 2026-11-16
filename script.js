@@ -272,7 +272,6 @@
         deviceType: marker.deviceType || '',
         floorLevel: marker.floorLevel || '',
         product: marker.product || '',
-        weight: marker.weight || '',
         location: marker.location || '',
         serviceDate: marker.serviceDate || '',
         manufacturingDate: marker.manufacturingDate || '',
@@ -802,7 +801,6 @@
         document.getElementById('markerProduct').value = marker ? marker.product : '';
         document.getElementById('markerDeviceType').value = marker ? marker.deviceType || '' : '';
         document.getElementById('markerFloorLevel').value = marker ? marker.floorLevel || '' : '';
-        document.getElementById('markerWeight').value = marker ? marker.weight || '' : '';
         document.getElementById('markerLocation').value = marker ? marker.location : '';
         document.getElementById('markerServiceDate').value = marker ? marker.serviceDate || '' : '';
         document.getElementById('markerManufacturingDate').value = marker ? marker.manufacturingDate || '' : '';
@@ -1782,7 +1780,6 @@
           product: document.getElementById('markerProduct').value.trim(),
           deviceType: document.getElementById('markerDeviceType').value.trim(),
           floorLevel: document.getElementById('markerFloorLevel').value.trim(),
-          weight: document.getElementById('markerWeight').value.trim(),
           location: document.getElementById('markerLocation').value.trim(),
           serviceDate: document.getElementById('markerServiceDate').value,
           manufacturingDate: document.getElementById('markerManufacturingDate').value
