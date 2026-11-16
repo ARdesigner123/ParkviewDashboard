@@ -367,8 +367,8 @@
     .map-marker {
       position: absolute;
       display: grid;
-      width: 24px;
-      height: 28px;
+      width: 18px;
+      height: 21px;
       padding: 0;
       place-items: center;
       border: 0;
@@ -381,7 +381,7 @@
     }
 
     .map-marker:hover { color: var(--blue-dark); }
-    .map-marker svg { width: 24px; height: 28px; }
+    .map-marker svg { width: 18px; height: 21px; }
 
     .zoom-controls {
       position: absolute;
