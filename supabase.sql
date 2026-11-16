@@ -1,4 +1,4 @@
--- Run this once in the Supabase SQL Editor before deploying the app.
+-- Run this in the Supabase SQL Editor before deploying (re-run after schema changes).
 -- These open policies allow anyone with the public site URL to edit markers.
 create table if not exists public.parkview_marker_state (
   project_id text primary key,
@@ -107,6 +107,43 @@ drop policy if exists "Public can initialize Parkview marker sites"
 create policy "Public can initialize Parkview marker sites"
   on public.parkview_marker_sites for insert
   to anon, authenticated
+  with check (true);
+
+create table if not exists public.parkview_projects (
+  site_id text not null,
+  project_id text not null,
+  name text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (site_id, project_id)
+);
+
+alter table public.parkview_projects enable row level security;
+
+grant select, insert, update
+  on table public.parkview_projects
+  to anon, authenticated;
+
+drop policy if exists "Public can read Parkview projects"
+  on public.parkview_projects;
+create policy "Public can read Parkview projects"
+  on public.parkview_projects for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "Public can create Parkview projects"
+  on public.parkview_projects;
+create policy "Public can create Parkview projects"
+  on public.parkview_projects for insert
+  to anon, authenticated
+  with check (true);
+
+drop policy if exists "Public can update Parkview projects"
+  on public.parkview_projects;
+create policy "Public can update Parkview projects"
+  on public.parkview_projects for update
+  to anon, authenticated
+  using (true)
   with check (true);
 
 create table if not exists public.parkview_layouts (

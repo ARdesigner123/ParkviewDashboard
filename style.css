@@ -123,6 +123,24 @@
       gap: 18px;
     }
 
+    .project-title-row { display: flex; align-items: center; gap: 7px; }
+
+    .project-rename {
+      display: grid;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      color: #78889a;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .project-rename:hover { border-color: #d7e8f6; color: var(--blue-dark); background: #edf6fd; }
+    .project-rename:focus-visible, #projectSelect:focus-visible { outline: 3px solid #86c7ff; outline-offset: 2px; }
+    .project-rename svg { width: 15px; height: 15px; }
+
     .eyebrow {
       margin: 0 0 5px;
       color: var(--blue);
@@ -146,7 +164,27 @@
       font-size: 12px;
     }
 
-    .heading-actions { display: flex; align-items: center; gap: 10px; }
+    .heading-actions { display: flex; align-items: center; gap: 9px; }
+
+    .project-select-label {
+      color: #788496;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    #projectSelect {
+      max-width: 185px;
+      height: 40px;
+      padding: 0 30px 0 11px;
+      border: 1px solid #dfe6ee;
+      border-radius: 8px;
+      color: #334358;
+      background: white;
+      font: inherit;
+      font-size: 11px;
+      font-weight: 650;
+    }
+
 
     .add-button {
       display: inline-flex;
@@ -170,6 +208,19 @@
       transform: translateY(-1px);
       background: var(--blue-dark);
       box-shadow: 0 7px 16px rgb(22 119 200 / 26%);
+    }
+
+    .add-button.secondary {
+      border: 1px solid #d8e6f2;
+      color: #245c86;
+      background: white;
+      box-shadow: none;
+    }
+
+    .add-button.secondary:hover {
+      border-color: #b6d6ef;
+      background: #f2f8fd;
+      box-shadow: 0 4px 11px rgb(22 119 200 / 9%);
     }
 
     .add-button:focus-visible, .icon-button:focus-visible, .nav-arrow:focus-visible,
@@ -316,8 +367,8 @@
     .map-marker {
       position: absolute;
       display: grid;
-      width: 34px;
-      height: 40px;
+      width: 24px;
+      height: 28px;
       padding: 0;
       place-items: center;
       border: 0;
@@ -330,7 +381,7 @@
     }
 
     .map-marker:hover { color: var(--blue-dark); }
-    .map-marker svg { width: 34px; height: 40px; }
+    .map-marker svg { width: 24px; height: 28px; }
 
     .zoom-controls {
       position: absolute;
@@ -941,6 +992,28 @@
     }
     .layout-rename-input:focus { border-color: #73b5e8; outline: 0; box-shadow: 0 0 0 3px rgb(22 119 200 / 10%); }
     #layoutRenameSave { border-color: var(--blue); color: white; background: var(--blue); }
+    .project-create-panel > p { margin: 9px 0 3px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .project-files-input {
+      display: block;
+      width: 100%;
+      margin: 0 0 20px;
+      color: #5b687a;
+      font: inherit;
+      font-size: 11px;
+    }
+    .project-files-input::file-selector-button {
+      min-height: 34px;
+      margin-right: 10px;
+      padding: 0 11px;
+      border: 1px solid #dfe6ee;
+      border-radius: 7px;
+      color: #334358;
+      background: #fbfcfe;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 650;
+    }
+    #projectCreateSave { border-color: var(--blue); color: white; background: var(--blue); }
 
     .sidebar-bottom {
       flex: 0 0 auto;
@@ -987,13 +1060,28 @@
       :root { --header-height: 66px; }
       .topbar { padding: 0 20px; }
       .workspace { gap: 14px; padding: 17px 18px 19px; }
-      .content-grid { grid-template-columns: minmax(0, 1fr) 205px; gap: 12px; }
+      .page-heading { flex-wrap: wrap; align-items: flex-start; }
+      .heading-actions { max-width: 100%; flex-wrap: wrap; margin-left: auto; }
+      .content-grid {
+        flex: 0 0 auto;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: minmax(390px, 66vh) minmax(250px, auto);
+        align-content: start;
+        gap: 12px;
+      }
+      .viewer-card { min-height: 390px; }
+      .sidebar-card { display: flex; height: min(390px, 48vh); min-height: 250px; }
+      .layout-list { max-height: 275px; }
       .layout-thumb { width: 55px; }
+      .heading-actions { gap: 6px; }
+      #projectSelect { max-width: 145px; }
+      html, body { height: auto; min-height: 100%; overflow-x: hidden; overflow-y: auto; }
+      .app-shell { height: auto; min-height: 100vh; min-height: 100dvh; }
+      .workspace { flex: 0 0 auto; }
     }
 
     @media (max-width: 720px) {
-      .content-grid { grid-template-columns: minmax(0, 1fr); }
-      .sidebar-card { display: none; }
+      .content-grid { grid-template-rows: minmax(390px, 62vh) minmax(250px, auto); }
     }
 
     @media (max-width: 620px) {
@@ -1006,11 +1094,18 @@
       .brand-caption, .live-status { display: none; }
       .topbar-right { gap: 0; }
       .workspace { gap: 12px; padding: 14px 12px 12px; }
-      .heading-subtitle { max-width: 230px; font-size: 10px; }
+      .page-heading { flex-direction: column; gap: 11px; }
+      .heading-subtitle { max-width: 290px; font-size: 10px; }
       .add-button { width: 40px; height: 40px; padding: 0; font-size: 0; }
       .add-button svg { width: 19px; height: 19px; }
-      .content-grid { grid-template-columns: minmax(0, 1fr); }
-      .sidebar-card { display: none; }
+      .project-select-label { display: none; }
+      #projectSelect { width: 100%; max-width: none; min-width: 0; height: 40px; padding-left: 9px; font-size: 11px; }
+      .heading-actions { gap: 5px; }
+      .heading-actions { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr) 40px 40px; }
+      .heading-actions #fileInput { position: absolute; }
+      .project-title-row { gap: 3px; }
+      .project-rename { width: 26px; height: 26px; }
+      .content-grid { grid-template-rows: minmax(390px, 60vh) minmax(250px, auto); }
       .viewer-toolbar { flex-basis: 48px; padding-right: 10px; padding-left: 11px; }
       .sheet-icon { width: 27px; height: 27px; }
       .sheet-counter { padding: 5px 7px; }

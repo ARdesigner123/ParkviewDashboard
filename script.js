@@ -24,7 +24,6 @@
       const layoutRenameForm = document.getElementById('layoutRenameForm');
       const layoutRenameInput = document.getElementById('layoutRenameInput');
       const toast = document.getElementById('toast');
-      const layouts = [...builtInLayouts];
       const markersByLayout = new Map();
       const sessionMarkerPhotos = new Map();
       const markerCloudConfig = window.PARKVIEW_SUPABASE;
@@ -33,6 +32,40 @@
         currentHostname || 'parkviewdashboard';
       const legacyMarkerStorageKey = 'mquest-parkview-markers';
       const markerStorageKey = `${legacyMarkerStorageKey}:${markerCloudSiteId}`;
+      const defaultProjectId = 'park-view-label';
+      const projectStorageKey = `mquest-parkview-projects:${markerCloudSiteId}`;
+      const activeProjectStorageKey = `mquest-parkview-active-project:${markerCloudSiteId}`;
+      const projects = [{
+        id: defaultProjectId,
+        name: 'Park View Label',
+        layouts: [...builtInLayouts]
+      }];
+      try {
+        const savedProjects = JSON.parse(localStorage.getItem(projectStorageKey) || '[]');
+        if (!Array.isArray(savedProjects)) throw new Error('Saved projects have an invalid format.');
+        savedProjects.forEach((project) => {
+          if (!project || typeof project.id !== 'string' || typeof project.name !== 'string') {
+            throw new Error('A saved project has an invalid format.');
+          }
+          const existing = projects.find((item) => item.id === project.id);
+          if (existing) {
+            existing.name = project.name;
+            existing.updatedAt = project.updatedAt;
+          } else {
+            projects.push({ id: project.id, name: project.name, updatedAt: project.updatedAt, layouts: [] });
+          }
+        });
+      } catch (error) {
+        console.error('Unable to restore saved projects:', error);
+      }
+      let savedActiveProjectId = null;
+      try {
+        savedActiveProjectId = localStorage.getItem(activeProjectStorageKey);
+      } catch (error) {
+        console.error('Unable to restore the active project:', error);
+      }
+      let activeProject = projects.find((project) => project.id === savedActiveProjectId) || projects[0];
+      let layouts = activeProject.layouts;
       const getMarkerCloudRestUrl = () => markerCloudConfig.restUrl.endsWith('/')
         ? markerCloudConfig.restUrl.slice(0, -1)
         : markerCloudConfig.restUrl;
@@ -50,8 +83,14 @@
       let markerSyncPromise = Promise.resolve();
       let layoutSyncPromise = Promise.resolve();
       let layoutSyncInProgress = false;
+      let projectSyncInProgress = false;
+      let projectSyncErrorAnnounced = false;
+      let projectCloudSyncAvailable = false;
       let layoutToRename = null;
+      let projectToRename = null;
       let layoutToDelete = null;
+      let pinch = null;
+      const activePointers = new Map();
       let markerCloudBaseline = new Map();
       let markerPhotoMigrationOccurred = false;
       let markerCloudInitialized = false;
@@ -73,6 +112,62 @@
         toast.classList.add('show');
         clearTimeout(toastTimer);
         toastTimer = setTimeout(() => toast.classList.remove('show'), 3200);
+      };
+
+      const getProjectForLayoutId = (layoutId) =>
+        projects.find((project) => project.id !== defaultProjectId && layoutId.startsWith(`${project.id}--`)) ||
+        projects[0];
+
+      const persistProjects = () => {
+        try {
+          localStorage.setItem(projectStorageKey, JSON.stringify(projects.map(({ id, name, updatedAt }) => ({
+            id,
+            name,
+            updatedAt
+          }))));
+          return true;
+        } catch (error) {
+          console.error('Unable to save projects:', error);
+          return false;
+        }
+      };
+
+      const updateProjectControls = () => {
+        const projectSelect = document.getElementById('projectSelect');
+        projectSelect.replaceChildren();
+        projects.forEach((project) => {
+          const option = document.createElement('option');
+          option.value = project.id;
+          option.textContent = project.name;
+          projectSelect.append(option);
+        });
+        projectSelect.value = activeProject.id;
+        document.getElementById('pageTitle').textContent = activeProject.name;
+        document.title = `${activeProject.name} | MQuest`;
+        const renameButton = document.getElementById('projectRename');
+        renameButton.setAttribute('aria-label', `Rename ${activeProject.name}`);
+        renameButton.title = `Rename ${activeProject.name}`;
+        document.querySelector('.sidebar-bottom .project-name').textContent = activeProject.name;
+        document.querySelector('.sidebar-bottom .project-location').textContent =
+          `${layouts.length} ${layouts.length === 1 ? 'layout' : 'layouts'} · Project workspace`;
+      };
+
+      const selectProject = (projectId) => {
+        const project = projects.find((item) => item.id === projectId);
+        if (!project || project === activeProject) return;
+        closeMarkerEditor();
+        activeProject = project;
+        layouts = activeProject.layouts;
+        selectedIndex = 0;
+        try {
+          localStorage.setItem(activeProjectStorageKey, project.id);
+        } catch (error) {
+          console.error('Unable to remember the active project:', error);
+          announce('Project opened, but the selected project could not be remembered.', true);
+        }
+        resetView();
+        updateProjectControls();
+        updateSelectedLayout();
       };
 
       const updateTransform = () => {
@@ -704,6 +799,9 @@
           rename.title = 'Rename layout';
           rename.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg><span>Rename</span>';
           rename.addEventListener('click', () => {
+            projectToRename = null;
+            document.getElementById('layoutRenameTitle').textContent = 'Rename layout';
+            document.getElementById('layoutRenameLabel').textContent = 'Layout name';
             layoutToRename = layout;
             layoutRenameInput.value = layout.name;
             layoutRenameDialog.hidden = false;
@@ -734,6 +832,7 @@
       };
 
       const updateSelectedLayout = () => {
+        updateProjectControls();
         if (!layouts.length) {
           selectedIndex = 0;
           image.removeAttribute('src');
@@ -752,12 +851,12 @@
         markerToggle.disabled = false;
         const layout = layouts[selectedIndex];
         image.src = layout.src;
-        image.alt = `Park View ${layout.name.toLowerCase()}`;
+        image.alt = `${activeProject.name} ${layout.name}`;
         document.getElementById('sheetTitle').textContent = layout.name;
         document.getElementById('sheetType').textContent = layout.uploaded ? 'Added image' : 'Project drawing';
         document.getElementById('sheetCounter').textContent =
           `${String(selectedIndex + 1).padStart(2, '0')} / ${String(layouts.length).padStart(2, '0')}`;
-        document.getElementById('imageCaption').textContent = `Park View · ${layout.name}`;
+        document.getElementById('imageCaption').textContent = `${activeProject.name} · ${layout.name}`;
         document.getElementById('prevLayout').disabled = selectedIndex === 0;
         document.getElementById('nextLayout').disabled = selectedIndex === layouts.length - 1;
         renderList();
@@ -830,6 +929,40 @@
         transaction.onerror = () => reject(transaction.error || new Error('Could not save this image.'));
         transaction.onabort = () => reject(transaction.error || new Error('Saving this image was cancelled.'));
       });
+
+      const addLayoutsToProject = async (project, files) => {
+        let storageFailureCount = 0;
+        let cloudFailureCount = 0;
+        let lastAddedIndex = project.layouts.length - 1;
+        for (const file of files) {
+          const prefix = project.id === defaultProjectId ? '' : `${project.id}--`;
+          const id = `${prefix}upload-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+          const upload = { id, name: file.name, blob: file, createdAt: Date.now() };
+          const layout = {
+            id,
+            name: file.name,
+            src: URL.createObjectURL(file),
+            type: 'Added image',
+            uploaded: true
+          };
+          project.layouts.push(layout);
+          lastAddedIndex = project.layouts.length - 1;
+          try {
+            await openDatabase();
+            await saveUpload(upload);
+          } catch (error) {
+            console.error('Unable to save uploaded layout:', error);
+            storageFailureCount += 1;
+          }
+          try {
+            await saveCloudLayoutState(layout, { imageFile: file });
+          } catch (error) {
+            console.error('Unable to sync uploaded layout:', error);
+            cloudFailureCount += 1;
+          }
+        }
+        return { lastAddedIndex, storageFailureCount, cloudFailureCount };
+      };
 
       const deleteUpload = (id) => new Promise((resolve, reject) => {
         const transaction = database.transaction('uploads', 'readwrite');
@@ -918,6 +1051,71 @@
         return rows;
       };
 
+      const saveCloudProject = async (project) => {
+        const response = await fetch(`${getMarkerCloudRestUrl()}/parkview_projects?on_conflict=site_id,project_id`, {
+          method: 'POST',
+          headers: {
+            apikey: markerCloudConfig.anonKey,
+            'Content-Type': 'application/json',
+            Prefer: 'resolution=merge-duplicates,return=minimal'
+          },
+          body: JSON.stringify({
+            site_id: markerCloudSiteId,
+            project_id: project.id,
+            name: project.name,
+            updated_at: project.updatedAt || new Date().toISOString()
+          })
+        });
+        if (!response.ok) throw new Error(`Supabase project save failed (${response.status}).`);
+      };
+
+      const fetchCloudProjects = async () => {
+        const response = await fetch(
+          `${getMarkerCloudRestUrl()}/parkview_projects?site_id=eq.${encodeURIComponent(markerCloudSiteId)}&select=project_id,name,updated_at`,
+          { headers: { apikey: markerCloudConfig.anonKey } }
+        );
+        if (!response.ok) throw new Error(`Supabase projects load failed (${response.status}).`);
+        const rows = await response.json();
+        if (!Array.isArray(rows)) throw new Error('Saved cloud projects have an invalid format.');
+        return rows;
+      };
+
+      const syncProjectsFromCloud = async () => {
+        if (projectSyncInProgress) return;
+        projectSyncInProgress = true;
+        try {
+          const remoteProjects = await fetchCloudProjects();
+          const remoteProjectsById = new Map();
+          remoteProjects.forEach((row) => {
+            if (typeof row.project_id !== 'string' || typeof row.name !== 'string') {
+              throw new Error('A saved cloud project has an invalid format.');
+            }
+            remoteProjectsById.set(row.project_id, row);
+            const existing = projects.find((project) => project.id === row.project_id);
+            if (existing) {
+              const localIsNewer = Date.parse(existing.updatedAt || '') > Date.parse(row.updated_at || '');
+              if (!localIsNewer) {
+                existing.name = row.name;
+                existing.updatedAt = row.updated_at;
+              }
+            } else {
+              projects.push({ id: row.project_id, name: row.name, updatedAt: row.updated_at, layouts: [] });
+            }
+          });
+          for (const project of projects) {
+            const remoteProject = remoteProjectsById.get(project.id);
+            const localIsNewer = remoteProject && Date.parse(project.updatedAt || '') > Date.parse(remoteProject.updated_at || '');
+            if (!remoteProject || localIsNewer) await saveCloudProject(project);
+          }
+          if (!persistProjects()) throw new Error('Project names could not be saved in browser storage.');
+          updateProjectControls();
+          projectSyncErrorAnnounced = false;
+          projectCloudSyncAvailable = true;
+        } finally {
+          projectSyncInProgress = false;
+        }
+      };
+
       const syncLayoutsFromCloud = async () => {
         if (layoutSyncInProgress || !markerEditor.hidden) return;
         layoutSyncInProgress = true;
@@ -931,11 +1129,18 @@
             if (typeof row.layout_id !== 'string' || typeof row.name !== 'string') {
               throw new Error('A saved cloud layout has an invalid format.');
             }
-            const existingIndex = layouts.findIndex((layout) => layout.id === row.layout_id);
+            const project = getProjectForLayoutId(row.layout_id);
+            const projectLayouts = project.layouts;
+            const existingIndex = projectLayouts.findIndex((layout) => layout.id === row.layout_id);
             if (row.deleted) {
               if (existingIndex !== -1) {
-                removeLayoutLocally(existingIndex);
-                structureChanged = true;
+                if (project === activeProject) {
+                  removeLayoutLocally(existingIndex);
+                  structureChanged = true;
+                } else {
+                  const [removedLayout] = projectLayouts.splice(existingIndex, 1);
+                  if (removedLayout.src.startsWith('blob:')) URL.revokeObjectURL(removedLayout.src);
+                }
               }
               if (row.is_uploaded) {
                 try {
@@ -950,7 +1155,7 @@
             const imageUrl = row.image_path ? getLayoutPublicUrl(row.image_path, row.updated_at) : null;
             if (existingIndex === -1) {
               if (!row.is_uploaded || !imageUrl) continue;
-              layouts.push({
+              projectLayouts.push({
                 id: row.layout_id,
                 name: row.name,
                 src: imageUrl,
@@ -959,13 +1164,13 @@
                 imagePath: row.image_path,
                 updatedAt: row.updated_at
               });
-              structureChanged = true;
+              if (project === activeProject) structureChanged = true;
             } else {
-              const layout = layouts[existingIndex];
+              const layout = projectLayouts[existingIndex];
               const imageChanged = Boolean(imageUrl &&
                 (layout.imagePath !== row.image_path || layout.updatedAt !== row.updated_at));
               if (layout.name !== row.name || imageChanged) {
-                if (layout.id === selectedLayoutId) selectedLayoutChanged = true;
+                if (project === activeProject && layout.id === selectedLayoutId) selectedLayoutChanged = true;
               }
               layout.name = row.name;
               layout.imagePath = row.image_path;
@@ -974,11 +1179,13 @@
             }
           }
 
-          for (const layout of layouts) {
-            if (knownRemoteLayouts.has(layout.id)) continue;
-            if (layout.uploaded && layout.src.startsWith('blob:')) {
-              const upload = (await getSavedUploads()).find((saved) => saved.id === layout.id);
-              if (upload) await saveCloudLayoutState(layout, { imageFile: upload.blob });
+          for (const project of projects) {
+            for (const layout of project.layouts) {
+              if (knownRemoteLayouts.has(layout.id)) continue;
+              if (layout.uploaded && layout.src.startsWith('blob:')) {
+                const upload = (await getSavedUploads()).find((saved) => saved.id === layout.id);
+                if (upload) await saveCloudLayoutState(layout, { imageFile: upload.blob });
+              }
             }
           }
           if (selectedIndex >= layouts.length) selectedIndex = Math.max(0, layouts.length - 1);
@@ -1029,8 +1236,9 @@
           database = await openDatabase();
           const uploads = await getSavedUploads();
           uploads.sort((a, b) => a.createdAt - b.createdAt).forEach((upload) => {
-            if (layouts.some((layout) => layout.id === upload.id)) return;
-            layouts.push({
+            const project = getProjectForLayoutId(upload.id);
+            if (project.layouts.some((layout) => layout.id === upload.id)) return;
+            project.layouts.push({
               id: upload.id,
               name: upload.name,
               src: URL.createObjectURL(upload.blob),
@@ -1049,38 +1257,10 @@
         const files = Array.from(event.target.files || []);
         const imageFiles = files.filter((file) => file.type.startsWith('image/'));
         const rejectedCount = files.length - imageFiles.length;
-        let storageFailureCount = 0;
-        let cloudFailureCount = 0;
         if (files.length === 0) return;
-
-        let lastAddedIndex = selectedIndex;
-        for (const file of imageFiles) {
-          const id = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-          const upload = { id, name: file.name, blob: file, createdAt: Date.now() };
-          const layout = {
-            id,
-            name: file.name,
-            src: URL.createObjectURL(file),
-            type: 'Added image',
-            uploaded: true
-          };
-          layouts.push(layout);
-          lastAddedIndex = layouts.length - 1;
-          try {
-            await openDatabase();
-            await saveUpload(upload);
-          } catch (error) {
-            console.error('Unable to save uploaded layout:', error);
-            storageFailureCount += 1;
-          }
-          try {
-            await saveCloudLayoutState(layout, { imageFile: file });
-          } catch (error) {
-            console.error('Unable to sync uploaded layout:', error);
-            cloudFailureCount += 1;
-          }
-        }
-        selectLayout(lastAddedIndex);
+        const { lastAddedIndex, storageFailureCount, cloudFailureCount } =
+          await addLayoutsToProject(activeProject, imageFiles);
+        if (imageFiles.length) selectLayout(lastAddedIndex);
         if (storageFailureCount) {
           announce(`${imageFiles.length} ${imageFiles.length === 1 ? 'layout was' : 'layouts were'} added for this session; ${storageFailureCount} could not be saved.`, true);
         } else if (cloudFailureCount) {
@@ -1095,8 +1275,120 @@
         fileInput.value = '';
       });
 
+      document.getElementById('projectSelect').addEventListener('change', (event) => {
+        selectProject(event.target.value);
+      });
+
+      const projectCreateDialog = document.getElementById('projectCreateDialog');
+      const projectCreateForm = document.getElementById('projectCreateForm');
+      const projectNameInput = document.getElementById('projectNameInput');
+      const projectLayoutsInput = document.getElementById('projectLayoutsInput');
+      document.getElementById('newProjectButton').addEventListener('click', () => {
+        projectCreateForm.reset();
+        projectCreateDialog.hidden = false;
+        projectNameInput.focus();
+      });
+      document.getElementById('projectCreateCancel').addEventListener('click', () => {
+        projectCreateDialog.hidden = true;
+      });
+      projectCreateDialog.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') projectCreateDialog.hidden = true;
+      });
+      projectCreateForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const name = projectNameInput.value.trim();
+        const files = Array.from(projectLayoutsInput.files || []).filter((file) => file.type.startsWith('image/'));
+        if (!name || !files.length) {
+          announce('Enter a project name and choose at least one image layout.', true);
+          return;
+        }
+        const createButton = document.getElementById('projectCreateSave');
+        createButton.disabled = true;
+        const project = {
+          id: `project-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          name,
+          updatedAt: new Date().toISOString(),
+          layouts: []
+        };
+        projects.push(project);
+        const projectSavedLocally = persistProjects();
+        let projectSavedToCloud = true;
+        try {
+          await saveCloudProject(project);
+          projectCloudSyncAvailable = true;
+          projectSyncErrorAnnounced = false;
+        } catch (error) {
+          console.error('Unable to sync new project:', error);
+          projectSavedToCloud = false;
+        }
+        const result = await addLayoutsToProject(project, files);
+        projectCreateDialog.hidden = true;
+        activeProject = project;
+        layouts = project.layouts;
+        selectedIndex = result.lastAddedIndex;
+        try {
+          localStorage.setItem(activeProjectStorageKey, project.id);
+        } catch (error) {
+          console.error('Unable to remember the active project:', error);
+        }
+        resetView();
+        updateSelectedLayout();
+        if (!projectSavedLocally || !projectSavedToCloud || result.storageFailureCount || result.cloudFailureCount) {
+          const issues = [];
+          if (!projectSavedLocally) issues.push('project name could not be saved in browser storage');
+          if (!projectSavedToCloud) issues.push('project name could not sync to other devices');
+          if (result.storageFailureCount) issues.push(`${result.storageFailureCount} layout image(s) could not be saved locally`);
+          if (result.cloudFailureCount) issues.push(`${result.cloudFailureCount} layout image(s) could not sync`);
+          announce(`Project created with ${files.length} layout(s), but ${issues.join('; ')}.`, true);
+        } else {
+          announce(`Project "${project.name}" created with ${files.length} layout(s).`);
+        }
+        createButton.disabled = false;
+      });
+
+      document.getElementById('projectRename').addEventListener('click', () => {
+        projectToRename = activeProject;
+        layoutToRename = null;
+        document.getElementById('layoutRenameTitle').textContent = 'Rename project';
+        document.getElementById('layoutRenameLabel').textContent = 'Project name';
+        layoutRenameInput.value = activeProject.name;
+        layoutRenameDialog.hidden = false;
+        layoutRenameInput.focus();
+        layoutRenameInput.select();
+      });
+
       layoutRenameForm.addEventListener('submit', async (event) => {
         event.preventDefault();
+        if (projectToRename) {
+          const project = projectToRename;
+          const name = layoutRenameInput.value.trim();
+          if (!name) {
+            layoutRenameInput.focus();
+            return;
+          }
+          const saveButton = document.getElementById('layoutRenameSave');
+          saveButton.disabled = true;
+          project.name = name;
+          project.updatedAt = new Date().toISOString();
+          layoutRenameDialog.hidden = true;
+          projectToRename = null;
+          const projectSavedLocally = persistProjects();
+          updateProjectControls();
+          try {
+            await saveCloudProject(project);
+            projectCloudSyncAvailable = true;
+            projectSyncErrorAnnounced = false;
+            announce(`Project renamed to "${name}" and synced across devices.`);
+          } catch (error) {
+            console.error('Unable to sync project name:', error);
+            announce(projectSavedLocally
+              ? `Project renamed on this device, but cloud sync failed (${error.message}).`
+              : `Project renamed, but saving failed (${error.message}).`, true);
+          } finally {
+            saveButton.disabled = false;
+          }
+          return;
+        }
         const layout = layoutToRename;
         const name = layoutRenameInput.value.trim();
         if (!layout || !name) {
@@ -1140,11 +1432,17 @@
       document.getElementById('layoutRenameCancel').addEventListener('click', () => {
         layoutRenameDialog.hidden = true;
         layoutToRename = null;
+        projectToRename = null;
+        document.getElementById('layoutRenameTitle').textContent = 'Rename layout';
+        document.getElementById('layoutRenameLabel').textContent = 'Layout name';
       });
       layoutRenameDialog.addEventListener('keydown', (event) => {
         if (event.key !== 'Escape') return;
         layoutRenameDialog.hidden = true;
         layoutToRename = null;
+        projectToRename = null;
+        document.getElementById('layoutRenameTitle').textContent = 'Rename layout';
+        document.getElementById('layoutRenameLabel').textContent = 'Layout name';
       });
 
       document.getElementById('layoutDeleteCancel').addEventListener('click', () => {
@@ -1393,19 +1691,66 @@
       }, { passive: false });
 
       stage.addEventListener('pointerdown', (event) => {
-        if (markerMode || event.button !== 0 || zoom <= 1 ||
+        if (markerMode || event.button !== 0 ||
           event.target.closest('button, input, select, textarea, label, .marker-editor')) return;
+        if (event.pointerType === 'touch') {
+          activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          stage.setPointerCapture(event.pointerId);
+          if (activePointers.size === 2) {
+            drag = null;
+            stage.classList.remove('is-dragging');
+            const [first, second] = Array.from(activePointers.values());
+            const centerX = (first.x + second.x) / 2;
+            const centerY = (first.y + second.y) / 2;
+            const bounds = stage.getBoundingClientRect();
+            const distance = Math.hypot(first.x - second.x, first.y - second.y);
+            if (distance > 0) {
+              const centerOffsetX = centerX - bounds.left - stage.clientWidth / 2;
+              const centerOffsetY = centerY - bounds.top - stage.clientHeight / 2;
+              pinch = {
+                distance,
+                zoom,
+                contentX: (centerOffsetX - panX) / zoom,
+                contentY: (centerOffsetY - panY) / zoom
+              };
+            }
+            return;
+          }
+        }
+        if (zoom <= 1) return;
         drag = { x: event.clientX, y: event.clientY, panX, panY };
         stage.classList.add('is-dragging');
         stage.setPointerCapture(event.pointerId);
       });
       stage.addEventListener('pointermove', (event) => {
+        if (activePointers.has(event.pointerId)) {
+          activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          if (pinch && activePointers.size >= 2) {
+            const [first, second] = Array.from(activePointers.values());
+            const distance = Math.hypot(first.x - second.x, first.y - second.y);
+            const centerX = (first.x + second.x) / 2;
+            const centerY = (first.y + second.y) / 2;
+            const bounds = stage.getBoundingClientRect();
+            zoom = Math.min(5, Math.max(1, pinch.zoom * distance / pinch.distance));
+            if (zoom === 1) {
+              panX = 0;
+              panY = 0;
+            } else {
+              panX = centerX - bounds.left - stage.clientWidth / 2 - pinch.contentX * zoom;
+              panY = centerY - bounds.top - stage.clientHeight / 2 - pinch.contentY * zoom;
+            }
+            updateTransform();
+            return;
+          }
+        }
         if (!drag) return;
         panX = drag.panX + event.clientX - drag.x;
         panY = drag.panY + event.clientY - drag.y;
         updateTransform();
       });
-      const endDrag = () => {
+      const endDrag = (event) => {
+        if (event && activePointers.has(event.pointerId)) activePointers.delete(event.pointerId);
+        pinch = null;
         drag = null;
         stage.classList.remove('is-dragging');
       };
@@ -1434,30 +1779,56 @@
       image.addEventListener('load', renderMarkers);
       new ResizeObserver(renderMarkers).observe(stage);
       restoreMarkers();
+      updateProjectControls();
       selectLayout(0);
-      layoutSyncPromise = restoreUploads().then(() => syncLayoutsFromCloud()).catch((error) => {
-        console.error('Unable to sync shared layouts:', error);
-        announce('Could not sync shared layouts. Showing layouts saved on this device.', true);
-      });
+      layoutSyncPromise = syncProjectsFromCloud()
+        .catch((error) => {
+          if (!projectSyncErrorAnnounced) {
+            console.error('Unable to sync shared projects:', error);
+            announce('Could not sync project names. Check the Supabase projects table setup.', true);
+            projectSyncErrorAnnounced = true;
+          }
+        })
+        .then(() => restoreUploads())
+        .then(() => syncLayoutsFromCloud())
+        .catch((error) => {
+          console.error('Unable to sync shared layouts:', error);
+          announce('Could not sync shared layouts. Showing layouts saved on this device.', true);
+        });
       markerSyncPromise = refreshSharedMarkers();
       setInterval(() => {
         markerSyncPromise = refreshSharedMarkers();
-        layoutSyncPromise = syncLayoutsFromCloud().catch((error) => {
-          console.error('Unable to sync shared layouts:', error);
+        const projectSync = projectCloudSyncAvailable ? syncProjectsFromCloud() : Promise.resolve();
+        layoutSyncPromise = projectSync.then(() => syncLayoutsFromCloud()).catch((error) => {
+          if (!projectSyncErrorAnnounced) {
+            console.error('Unable to sync shared projects or layouts:', error);
+            announce('Could not sync projects or layouts. Check the Supabase setup.', true);
+            projectSyncErrorAnnounced = true;
+          }
         });
       }, 5000);
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
           markerSyncPromise = refreshSharedMarkers();
-          layoutSyncPromise = syncLayoutsFromCloud().catch((error) => {
-            console.error('Unable to sync shared layouts:', error);
+          const projectSync = projectCloudSyncAvailable ? syncProjectsFromCloud() : Promise.resolve();
+          layoutSyncPromise = projectSync.then(() => syncLayoutsFromCloud()).catch((error) => {
+            if (!projectSyncErrorAnnounced) {
+              console.error('Unable to sync shared projects or layouts:', error);
+              announce('Could not sync projects or layouts. Check the Supabase setup.', true);
+              projectSyncErrorAnnounced = true;
+            }
           });
         }
       });
       window.addEventListener('focus', () => {
         markerSyncPromise = refreshSharedMarkers();
-        layoutSyncPromise = syncLayoutsFromCloud().catch((error) => {
-          console.error('Unable to sync shared layouts:', error);
+        const projectSync = projectCloudSyncAvailable ? syncProjectsFromCloud() : Promise.resolve();
+        layoutSyncPromise = projectSync.then(() => syncLayoutsFromCloud()).catch((error) => {
+          if (!projectSyncErrorAnnounced) {
+            console.error('Unable to sync shared projects or layouts:', error);
+            announce('Could not sync projects or layouts. Check the Supabase setup.', true);
+            projectSyncErrorAnnounced = true;
+          }
         });
       });
     })();

@@ -28,10 +28,21 @@
       <section class="page-heading" aria-labelledby="pageTitle">
         <div>
           <p class="eyebrow">Project workspace</p>
-          <h1 id="pageTitle">Park View Label</h1>
+          <div class="project-title-row">
+            <h1 id="pageTitle">Park View Label</h1>
+            <button class="project-rename" id="projectRename" type="button" aria-label="Rename Park View Label" title="Rename project">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>
+            </button>
+          </div>
           <p class="heading-subtitle">Browse, inspect and manage your project drawings.</p>
         </div>
         <div class="heading-actions">
+          <label class="project-select-label" for="projectSelect">Project</label>
+          <select id="projectSelect" aria-label="Select project"></select>
+          <button class="add-button secondary" id="newProjectButton" type="button">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10v6m-3-3h6"/></svg>
+            New project
+          </button>
           <input id="fileInput" type="file" accept="image/*" multiple aria-label="Add layout images">
           <label class="add-button" for="fileInput">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
@@ -131,7 +142,7 @@
           <div class="viewer-footer">
             <div class="viewer-hint">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 11V5a2 2 0 0 1 4 0v5-7a2 2 0 0 1 4 0v8-6a2 2 0 0 1 4 0v9a7 7 0 0 1-7 7h-1.5a6 6 0 0 1-4.8-2.4L3.8 15a2 2 0 0 1 3.2-2.4L9 15"/></svg>
-              Scroll to zoom · Drag to pan
+              Pinch or scroll to zoom · Drag to pan
             </div>
             <span class="keyboard-hint">← → to navigate</span>
           </div>
@@ -165,11 +176,25 @@
   <div class="layout-confirm" id="layoutRenameDialog" hidden role="dialog" aria-modal="true" aria-labelledby="layoutRenameTitle">
     <form class="layout-confirm-panel" id="layoutRenameForm">
       <h2 id="layoutRenameTitle">Rename layout</h2>
-      <label class="layout-rename-field" for="layoutRenameInput">Layout name</label>
+      <label class="layout-rename-field" id="layoutRenameLabel" for="layoutRenameInput">Layout name</label>
       <input id="layoutRenameInput" class="layout-rename-input" type="text" maxlength="100" required>
       <div class="layout-confirm-actions">
         <button id="layoutRenameCancel" type="button">Cancel</button>
         <button id="layoutRenameSave" type="submit">Save name</button>
+      </div>
+    </form>
+  </div>
+  <div class="layout-confirm" id="projectCreateDialog" hidden role="dialog" aria-modal="true" aria-labelledby="projectCreateTitle">
+    <form class="layout-confirm-panel project-create-panel" id="projectCreateForm">
+      <h2 id="projectCreateTitle">Create a project</h2>
+      <p>Give your project a name and add at least one layout image.</p>
+      <label class="layout-rename-field" for="projectNameInput">Project name</label>
+      <input id="projectNameInput" class="layout-rename-input" type="text" maxlength="100" placeholder="e.g. North Tower" required>
+      <label class="layout-rename-field" for="projectLayoutsInput">Layout images</label>
+      <input id="projectLayoutsInput" class="project-files-input" type="file" accept="image/*" multiple required>
+      <div class="layout-confirm-actions">
+        <button id="projectCreateCancel" type="button">Cancel</button>
+        <button id="projectCreateSave" type="submit">Create project</button>
       </div>
     </form>
   </div>
