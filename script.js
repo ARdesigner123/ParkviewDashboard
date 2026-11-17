@@ -115,6 +115,53 @@
       let photoViewerReturnFocus = null;
       const photoViewerResizeObserver = new ResizeObserver(() => fitPhotoToStage());
       photoViewerResizeObserver.observe(photoViewerStage);
+      const clockTime = document.getElementById('clockTime');
+      const clockDate = document.getElementById('clockDate');
+      const updateClock = () => {
+        const now = new Date();
+        clockTime.textContent = new Intl.DateTimeFormat('en-SG', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hourCycle: 'h23'
+        }).format(now);
+        clockDate.textContent = new Intl.DateTimeFormat('en-SG', {
+          weekday: 'short',
+          day: 'numeric',
+          month: 'long',
+          year: 'numeric'
+        }).format(now);
+      };
+      updateClock();
+      setInterval(updateClock, 1000);
+
+      const themeToggle = document.getElementById('themeToggle');
+      const themeToggleLabel = document.getElementById('themeToggleLabel');
+      const themeStorageKey = 'mquest-parkview-theme';
+      const setTheme = (theme) => {
+        const isDark = theme === 'dark';
+        document.body.dataset.theme = isDark ? 'dark' : 'light';
+        themeToggle.setAttribute('aria-pressed', String(isDark));
+        themeToggle.setAttribute('aria-label', `Switch to ${isDark ? 'light' : 'dark'} mode`);
+        themeToggleLabel.textContent = isDark ? 'Dark mode' : 'Light mode';
+      };
+      let savedTheme = 'light';
+      try {
+        savedTheme = localStorage.getItem(themeStorageKey) || 'light';
+      } catch (error) {
+        console.error('Unable to restore the color theme:', error);
+      }
+      setTheme(savedTheme === 'dark' ? 'dark' : 'light');
+      themeToggle.addEventListener('click', () => {
+        const nextTheme = document.body.dataset.theme === 'dark' ? 'light' : 'dark';
+        setTheme(nextTheme);
+        try {
+          localStorage.setItem(themeStorageKey, nextTheme);
+        } catch (error) {
+          console.error('Unable to save the color theme:', error);
+          announce('Theme changed, but the preference could not be saved.', true);
+        }
+      });
 
       const announce = (message, isError = false) => {
         toast.textContent = message;
@@ -186,6 +233,7 @@
         document.querySelector('.sidebar-bottom .project-name').textContent = activeProject.name;
         document.querySelector('.sidebar-bottom .project-location').textContent =
           `${layouts.length} ${layouts.length === 1 ? 'layout' : 'layouts'} · Project workspace`;
+        document.getElementById('sidebarProjectName').textContent = activeProject.name;
       };
 
       const selectProject = (projectId) => {
