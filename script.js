@@ -865,8 +865,17 @@
       };
 
       const storeMonthYear = (value) => {
-        const monthYear = value.trim().match(/^(0[1-9]|1[0-2])\/(\d{4})$/);
-        return monthYear ? `${monthYear[2]}-${monthYear[1]}` : '';
+        const monthYear = value.trim();
+        if (/^\d{4}-(0[1-9]|1[0-2])$/.test(monthYear)) return monthYear;
+        const formattedMonthYear = monthYear.match(/^(0[1-9]|1[0-2])\/(\d{4})$/);
+        return formattedMonthYear ? `${formattedMonthYear[2]}-${formattedMonthYear[1]}` : '';
+      };
+
+      const monthInputValue = (value) => {
+        const storedMonthYear = value.match(/^(\d{4})-(0[1-9]|1[0-2])(?:-\d{2})?$/);
+        if (storedMonthYear) return `${storedMonthYear[1]}-${storedMonthYear[2]}`;
+        const formattedMonthYear = value.match(/^(0[1-9]|1[0-2])\/(\d{4})$/);
+        return formattedMonthYear ? `${formattedMonthYear[2]}-${formattedMonthYear[1]}` : '';
       };
 
       const showMarkerDetails = (x, y, marker) => {
@@ -930,8 +939,8 @@
         document.getElementById('markerDeviceType').value = marker ? marker.deviceType || '' : '';
         document.getElementById('markerFloorLevel').value = marker ? marker.floorLevel || '' : '';
         document.getElementById('markerLocation').value = marker ? marker.location : '';
-        document.getElementById('markerServiceDate').value = marker ? formatMonthYear(marker.serviceDate || '') : '';
-        document.getElementById('markerManufacturingDate').value = marker ? formatMonthYear(marker.manufacturingDate || '') : '';
+        document.getElementById('markerServiceDate').value = marker ? monthInputValue(marker.serviceDate || '') : '';
+        document.getElementById('markerManufacturingDate').value = marker ? monthInputValue(marker.manufacturingDate || '') : '';
         document.getElementById('markerDelete').hidden = !marker;
         markerEditor.hidden = false;
         photoLoadToken += 1;

@@ -119,17 +119,17 @@
               </button>
             </div>
             <form class="marker-editor" id="markerEditor" hidden aria-label="Device details">
-              <div class="marker-editor-content">
-                <div class="marker-editor-heading">
-                  <div>
-                    <h2 id="markerEditorTitle">Add a marker</h2>
-                    <p>Enter details for this device.</p>
-                  </div>
-                  <div class="marker-editor-controls">
-                    <button class="marker-edit" id="markerEdit" type="button" hidden>Edit marker</button>
-                    <button class="marker-close" id="markerClose" type="button" aria-label="Close marker form">&times;</button>
-                  </div>
+              <div class="marker-editor-heading">
+                <div>
+                  <h2 id="markerEditorTitle">Add a marker</h2>
+                  <p>Enter details for this device.</p>
                 </div>
+                <div class="marker-editor-controls">
+                  <button class="marker-edit" id="markerEdit" type="button" hidden>Edit marker</button>
+                  <button class="marker-close" id="markerClose" type="button" aria-label="Close marker form">&times;</button>
+                </div>
+              </div>
+              <div class="marker-editor-content">
                 <div class="marker-details-view" id="markerDetailsView" hidden>
                   <div class="marker-details-grid" id="markerDetailsGrid"></div>
                   <section class="marker-details-image-section" aria-label="Marker images">
@@ -160,11 +160,11 @@
                   </label>
                   <label class="marker-field">
                     <span>Next Inspection Date</span>
-                    <input id="markerServiceDate" name="serviceDate" type="text" inputmode="numeric" placeholder="MM/YYYY" pattern="(0[1-9]|1[0-2])/[0-9]{4}" maxlength="7" title="Enter a date as MM/YYYY">
+                    <input id="markerServiceDate" name="serviceDate" type="month" lang="en-GB" title="Choose the inspection month and year">
                   </label>
                   <label class="marker-field">
                     <span>Manufacturing Date</span>
-                    <input id="markerManufacturingDate" name="manufacturingDate" type="text" inputmode="numeric" placeholder="MM/YYYY" pattern="(0[1-9]|1[0-2])/[0-9]{4}" maxlength="7" title="Enter a date as MM/YYYY">
+                    <input id="markerManufacturingDate" name="manufacturingDate" type="month" lang="en-GB" title="Choose the manufacturing month and year">
                   </label>
                   <div class="marker-photo-field">
                     <div class="marker-photo-gallery" id="markerPhotoGallery" aria-label="Marker photo previews"></div>
