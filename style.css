@@ -389,6 +389,26 @@
     .map-marker:hover { color: var(--blue-dark); }
     .map-marker svg { width: 18px; height: 21px; }
 
+    .map-marker-device-id {
+      position: absolute;
+      top: -5px;
+      left: 13px;
+      max-width: 62px;
+      overflow: hidden;
+      padding: 1px 3px;
+      border: 1px solid rgb(255 255 255 / 90%);
+      border-radius: 4px;
+      color: #233044;
+      background: white;
+      box-shadow: 0 1px 3px rgb(18 34 54 / 22%);
+      font-size: 7px;
+      font-weight: 800;
+      line-height: 1.2;
+      pointer-events: none;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
     .zoom-controls {
       position: absolute;
       z-index: 3;
@@ -448,6 +468,10 @@
     }
 
     .marker-editor[hidden] { display: none; }
+    .marker-details-view[hidden],
+    .marker-edit-fields[hidden],
+    .marker-edit[hidden],
+    .marker-editor-actions[hidden] { display: none; }
 
     .marker-editor-content {
       display: flex;
@@ -459,12 +483,79 @@
       padding: 16px;
     }
 
+    .marker-edit-fields {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .marker-details-view {
+      display: flex;
+      flex: 1 1 auto;
+      flex-direction: column;
+      gap: 15px;
+    }
+
+    .marker-details-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .marker-detail-item {
+      display: flex;
+      min-width: 0;
+      min-height: 58px;
+      flex-direction: column;
+      justify-content: center;
+      gap: 6px;
+      padding: 9px 10px;
+      border: 1px solid #e1e8f0;
+      border-radius: 7px;
+      background: #f8fafc;
+    }
+
+    .marker-detail-item span {
+      color: #718096;
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .marker-detail-item strong {
+      overflow-wrap: anywhere;
+      color: #26364c;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .marker-details-image-section h3 {
+      margin: 0 0 9px;
+      color: #435168;
+      font-size: 10px;
+      font-weight: 750;
+    }
+
+    .marker-details-photos {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .marker-details-empty {
+      margin: 0;
+      color: #8190a2;
+      font-size: 10px;
+    }
+
     .marker-editor-heading {
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
       gap: 12px;
     }
+
+    .marker-editor-controls { display: flex; flex: 0 0 auto; align-items: center; gap: 5px; }
 
     .marker-editor-heading h2 {
       margin: 0;
@@ -491,6 +582,21 @@
     }
 
     .marker-close:hover { color: #26364c; background: #f0f3f7; }
+
+    .marker-edit {
+      min-height: 28px;
+      padding: 0 9px;
+      border: 1px solid #dfe6ee;
+      border-radius: 6px;
+      color: #38536f;
+      background: #f8fafc;
+      cursor: pointer;
+      font: inherit;
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .marker-edit:hover { border-color: #b9d8f0; color: var(--blue-dark); background: #edf6fd; }
 
     .marker-field { display: flex; flex-direction: column; gap: 6px; }
     .marker-field span { color: #435168; font-size: 10px; font-weight: 700; }
@@ -1307,6 +1413,13 @@
     body[data-theme="dark"] .marker-editor,
     body[data-theme="dark"] .marker-editor-actions { border-color: #354156; color: #e1e8f2; background: #1b2535; }
     body[data-theme="dark"] .marker-field span { color: #c4cfdf; }
+    body[data-theme="dark"] .marker-detail-item { border-color: #354156; background: #202b3d; }
+    body[data-theme="dark"] .marker-detail-item span,
+    body[data-theme="dark"] .marker-details-image-section h3 { color: #aab7ca; }
+    body[data-theme="dark"] .marker-detail-item strong,
+    body[data-theme="dark"] .marker-details-empty { color: #e1e8f2; }
+    body[data-theme="dark"] .marker-edit { border-color: #3a4659; color: #c4cfdf; background: #202b3d; }
+    body[data-theme="dark"] .map-marker-device-id { border-color: #354156; color: #e1e8f2; background: #1b2535; }
     body[data-theme="dark"] .marker-field input,
     body[data-theme="dark"] .layout-rename-input,
     body[data-theme="dark"] #projectSelect { border-color: #3a4659; color: #e1e8f2; background: #172132; }

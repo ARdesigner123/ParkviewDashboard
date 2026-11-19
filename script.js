@@ -86,6 +86,7 @@
       let markerMode = false;
       let draftMarkerPoint = null;
       let editingMarkerId = null;
+      let markerPanelPoint = null;
       let toastTimer;
       let database = null;
       let databasePromise = null;
@@ -676,9 +677,16 @@
           pin.className = 'map-marker';
           pin.style.left = `${bounds.left + marker.x * bounds.width}px`;
           pin.style.top = `${bounds.top + marker.y * bounds.height}px`;
-          pin.setAttribute('aria-label', `Marker: ${marker.product || marker.location || 'Layout detail'}`);
+          const markerName = marker.product || marker.location || 'Layout detail';
+          pin.setAttribute('aria-label', `Marker: ${markerName}${marker.deviceId ? `, device ID ${marker.deviceId}` : ''}`);
           pin.title = marker.product || marker.location || 'Layout marker';
           pin.innerHTML = '<svg viewBox="0 0 24 28" fill="none" aria-hidden="true"><path d="M12 27s10-9.2 10-16A10 10 0 1 0 2 11c0 6.8 10 16 10 16Z" fill="currentColor"/><circle cx="12" cy="10.5" r="3.2" fill="white"/></svg>';
+          if (marker.deviceId) {
+            const badge = document.createElement('span');
+            badge.className = 'map-marker-device-id';
+            badge.textContent = marker.deviceId;
+            pin.append(badge);
+          }
           pin.addEventListener('click', (event) => {
             event.stopPropagation();
             const markerX = bounds.left + marker.x * bounds.width;
@@ -686,7 +694,7 @@
             const screenX = stage.clientWidth / 2 + (markerX - stage.clientWidth / 2) * zoom + panX;
             const screenY = stage.clientHeight / 2 + (markerY - stage.clientHeight / 2) * zoom + panY;
             setMarkerMode(false);
-            showMarkerEditor(screenX, screenY, marker);
+            showMarkerDetails(screenX, screenY, marker);
           });
           markerLayer.append(pin);
         });
@@ -749,15 +757,18 @@
         });
         markerEditor.hidden = true;
         editingMarkerId = null;
+        markerPanelPoint = null;
         draftMarkerPoint = null;
         pendingMarkerPhotos = [];
         removedMarkerPhotoIds = new Set();
         markerPhotoInput.value = '';
         markerPhotoGallery.replaceChildren();
+        document.getElementById('markerDetailsGrid').replaceChildren();
+        document.getElementById('markerDetailsPhotos').replaceChildren();
         setMarkerMode(false);
       };
 
-      const createPhotoCard = (photo, url, isPending = false) => {
+      const createPhotoCard = (photo, url, isPending = false, canRemove = true) => {
         const card = document.createElement('div');
         card.className = `marker-photo-card${isPending ? ' marker-photo-pending' : ''}`;
         const preview = document.createElement('img');
@@ -769,6 +780,10 @@
         open.setAttribute('aria-label', 'View image');
         open.append(preview);
         open.addEventListener('click', () => openPhotoViewer(url));
+        if (!canRemove) {
+          card.append(open);
+          return card;
+        }
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'marker-photo-remove';
@@ -792,31 +807,37 @@
         return card;
       };
 
-      const renderMarkerPhotos = (marker) => {
-        markerPhotoGallery.replaceChildren();
+      const renderMarkerPhotos = (marker, gallery = markerPhotoGallery, canRemove = true, includePending = true) => {
+        gallery.replaceChildren();
         const currentPhotoLoad = photoLoadToken;
         if (!marker) {
-          pendingMarkerPhotos.forEach((photo) => markerPhotoGallery.append(createPhotoCard(photo, photo.url, true)));
+          if (includePending) pendingMarkerPhotos.forEach((photo) => gallery.append(createPhotoCard(photo, photo.url, true, canRemove)));
           return;
         }
 
         const photos = Array.isArray(marker.photos)
           ? marker.photos
           : marker.photoId ? [{ id: marker.photoId, name: marker.photoName || 'Saved image' }] : [];
+        if (!photos.length && gallery === document.getElementById('markerDetailsPhotos')) {
+          const emptyMessage = document.createElement('p');
+          emptyMessage.className = 'marker-details-empty';
+          emptyMessage.textContent = 'No images attached.';
+          gallery.append(emptyMessage);
+        }
         photos.filter((photo) => !removedMarkerPhotoIds.has(photo.id)).forEach((photo) => {
           const cachedUrl = sessionMarkerPhotos.get(photo.id);
           if (cachedUrl) {
-            markerPhotoGallery.append(createPhotoCard(photo, cachedUrl));
+            gallery.append(createPhotoCard(photo, cachedUrl, false, canRemove));
             return;
           }
           if (photo.path) {
-            markerPhotoGallery.append(createPhotoCard(photo, getMarkerPhotoPublicUrl(photo.path)));
+            gallery.append(createPhotoCard(photo, getMarkerPhotoPublicUrl(photo.path), false, canRemove));
             return;
           }
           const placeholder = document.createElement('div');
           placeholder.className = 'marker-photo-card marker-photo-loading';
           placeholder.textContent = 'Loading image…';
-          markerPhotoGallery.append(placeholder);
+          gallery.append(placeholder);
           openDatabase()
             .then(() => getMarkerPhoto(photo.id))
             .then((savedPhoto) => {
@@ -824,7 +845,7 @@
               if (!savedPhoto || !savedPhoto.blob) throw new Error(`Could not find ${photo.name || 'a saved marker image'}.`);
               const url = URL.createObjectURL(savedPhoto.blob);
               sessionMarkerPhotos.set(photo.id, url);
-              placeholder.replaceWith(createPhotoCard(photo, url));
+              placeholder.replaceWith(createPhotoCard(photo, url, false, canRemove));
             })
             .catch((error) => {
               if (currentPhotoLoad !== photoLoadToken || markerEditor.hidden || editingMarkerId !== marker.id) return;
@@ -833,25 +854,84 @@
               announce(error.message || 'Could not load a saved marker image.', true);
             });
         });
-        pendingMarkerPhotos.forEach((photo) => markerPhotoGallery.append(createPhotoCard(photo, photo.url, true)));
+        if (includePending) pendingMarkerPhotos.forEach((photo) => gallery.append(createPhotoCard(photo, photo.url, true, canRemove)));
+      };
+
+      const formatMonthYear = (value) => {
+        if (!value) return '';
+        const monthYear = value.match(/^(\d{4})-(\d{2})(?:-\d{2})?$/);
+        if (monthYear) return `${monthYear[2]}/${monthYear[1]}`;
+        return value;
+      };
+
+      const storeMonthYear = (value) => {
+        const monthYear = value.trim().match(/^(0[1-9]|1[0-2])\/(\d{4})$/);
+        return monthYear ? `${monthYear[2]}-${monthYear[1]}` : '';
+      };
+
+      const showMarkerDetails = (x, y, marker) => {
+        photoLoadToken += 1;
+        editingMarkerId = marker.id;
+        markerPanelPoint = { x, y };
+        document.getElementById('markerEditorTitle').textContent = 'Marker Details';
+        document.querySelector('.marker-editor-heading p').textContent = 'Device details';
+        document.getElementById('markerDetailsView').hidden = false;
+        document.getElementById('markerEditFields').hidden = true;
+        document.getElementById('markerEdit').hidden = false;
+        document.getElementById('markerEditorActions').hidden = true;
+        const detailsGrid = document.getElementById('markerDetailsGrid');
+        detailsGrid.replaceChildren();
+        [
+          ['Device ID', marker.deviceId],
+          ['Device Name', marker.product],
+          ['Device Type', marker.deviceType],
+          ['Floor Level', marker.floorLevel],
+          ['Venue', marker.location],
+          ['Next Inspection Date', formatMonthYear(marker.serviceDate)],
+          ['Manufacturing Date', formatMonthYear(marker.manufacturingDate)]
+        ].forEach(([label, value]) => {
+          const item = document.createElement('div');
+          item.className = 'marker-detail-item';
+          const itemLabel = document.createElement('span');
+          itemLabel.textContent = label;
+          const itemValue = document.createElement('strong');
+          itemValue.textContent = value || '—';
+          item.append(itemLabel, itemValue);
+          detailsGrid.append(item);
+        });
+        markerEditor.hidden = false;
+        removedMarkerPhotoIds = new Set();
+        renderMarkerPhotos(marker, document.getElementById('markerDetailsPhotos'), false, false);
+        requestAnimationFrame(() => {
+          const left = Math.max(8, Math.min(x + 12, stage.clientWidth - markerEditor.offsetWidth - 8));
+          const top = Math.max(8, Math.min(y + 12, stage.clientHeight - markerEditor.offsetHeight - 8));
+          markerEditor.style.left = `${left}px`;
+          markerEditor.style.top = `${top}px`;
+        });
       };
 
       const showMarkerEditor = (x, y, marker = null) => {
         photoLoadToken += 1;
         pendingMarkerPhotos.forEach((photo) => URL.revokeObjectURL(photo.url));
         editingMarkerId = marker ? marker.id : null;
+        markerPanelPoint = { x, y };
         draftMarkerPoint = marker ? null : { x: draftMarkerPoint.x, y: draftMarkerPoint.y };
         pendingMarkerPhotos = [];
         removedMarkerPhotoIds = new Set();
         markerPhotoInput.value = '';
         document.getElementById('markerEditorTitle').textContent = marker ? 'Edit marker' : 'Add a marker';
+        document.querySelector('.marker-editor-heading p').textContent = 'Enter details for this device.';
+        document.getElementById('markerDetailsView').hidden = true;
+        document.getElementById('markerEditFields').hidden = false;
+        document.getElementById('markerEdit').hidden = true;
+        document.getElementById('markerEditorActions').hidden = false;
         document.getElementById('markerDeviceId').value = marker ? marker.deviceId || '' : '';
         document.getElementById('markerProduct').value = marker ? marker.product : '';
         document.getElementById('markerDeviceType').value = marker ? marker.deviceType || '' : '';
         document.getElementById('markerFloorLevel').value = marker ? marker.floorLevel || '' : '';
         document.getElementById('markerLocation').value = marker ? marker.location : '';
-        document.getElementById('markerServiceDate').value = marker ? marker.serviceDate || '' : '';
-        document.getElementById('markerManufacturingDate').value = marker ? marker.manufacturingDate || '' : '';
+        document.getElementById('markerServiceDate').value = marker ? formatMonthYear(marker.serviceDate || '') : '';
+        document.getElementById('markerManufacturingDate').value = marker ? formatMonthYear(marker.manufacturingDate || '') : '';
         document.getElementById('markerDelete').hidden = !marker;
         markerEditor.hidden = false;
         photoLoadToken += 1;
@@ -1829,8 +1909,8 @@
           deviceType: document.getElementById('markerDeviceType').value.trim(),
           floorLevel: document.getElementById('markerFloorLevel').value.trim(),
           location: document.getElementById('markerLocation').value.trim(),
-          serviceDate: document.getElementById('markerServiceDate').value,
-          manufacturingDate: document.getElementById('markerManufacturingDate').value
+          serviceDate: storeMonthYear(document.getElementById('markerServiceDate').value),
+          manufacturingDate: storeMonthYear(document.getElementById('markerManufacturingDate').value)
         };
         const markerId = editingMarkerId || `marker-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const existingMarker = markers.find((item) => item.id === markerId);
@@ -1902,6 +1982,14 @@
       });
 
       document.getElementById('markerClose').addEventListener('click', closeMarkerEditor);
+      document.getElementById('markerEdit').addEventListener('click', () => {
+        const marker = getCurrentMarkers().find((item) => item.id === editingMarkerId);
+        if (!marker || !markerPanelPoint) {
+          announce('Could not find this marker to edit. Close the details and try again.', true);
+          return;
+        }
+        showMarkerEditor(markerPanelPoint.x, markerPanelPoint.y, marker);
+      });
       document.getElementById('photoViewerClose').addEventListener('click', closePhotoViewer);
       document.getElementById('photoZoomIn').addEventListener('click', () => setPhotoZoom(photoZoom * 1.25));
       document.getElementById('photoZoomOut').addEventListener('click', () => setPhotoZoom(photoZoom / 1.25));
