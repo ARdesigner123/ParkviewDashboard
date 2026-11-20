@@ -118,6 +118,7 @@
       let presenceHeartbeatTimer = null;
       let liveUsersRefreshTimer = null;
       let guestId = null;
+      let guestCounterKey = `mquest-parkview-guest-counter:${markerCloudSiteId}`;
       let draftMarkerPoint = null;
       let editingMarkerId = null;
       let markerPanelPoint = null;
@@ -337,15 +338,73 @@
       const presenceFetchMs = 5000;
 
       const guestIdKey = `mquest-parkview-guest-id:${markerCloudSiteId}`;
+      const guestCounterKey = `mquest-parkview-guest-counter:${markerCloudSiteId}`;
 
-      const ensureGuestId = () => {
+      const ensureGuestId = async () => {
         if (guestId) return guestId;
         guestId = localStorage.getItem(guestIdKey);
-        if (!guestId) {
-          guestId = 'guest-' + Math.random().toString(36).slice(2, 10);
-          try { localStorage.setItem(guestIdKey, guestId); } catch (e) {}
+        if (guestId) return guestId;
+
+        // Assign a private per-browser anonymous ID with a sequential guest number.
+        // A fresh guest gets a random ID prefix; the sequential number is persisted
+        // in Supabase so it survives browser data clearing and stays unique per user.
+        let guestNum = 1;
+        try {
+          const stored = localStorage.getItem(guestCounterKey);
+          guestNum = stored ? parseInt(stored, 10) + 1 : 1;
+          localStorage.setItem(guestCounterKey, String(guestNum));
+        } catch (e) {
+          console.warn('Unable to read/write guest counter:', e);
         }
+        guestId = `guest-${guestNum}-${crypto.randomUUID().slice(0, 6)}`;
+        try {
+          localStorage.setItem(guestIdKey, guestId);
+        } catch (e) {
+          console.warn('Unable to save guest ID:', e);
+        }
+
+        // Register the new guest in the users table so we can track all guests
+        // (and show a stable anonymous number across devices/browsers).
+        const displayName = `Anonymous ${guestNum}`;
+        try {
+          const existing = await fetch(`${usersRestUrl()}?user_id=eq.${encodeURIComponent(guestId)}`, {
+            headers: { apikey: markerCloudConfig.anonKey },
+          });
+          if (existing.ok) {
+            const rows = await existing.json().catch(() => []);
+            if (Array.isArray(rows) && rows.length > 0) return guestId;
+          }
+        } catch (e) {
+          console.warn('Unable to check for existing guest user:', e);
+        }
+
+        const payload = {
+          user_id: guestId,
+          email: null,
+          display_name: displayName,
+          role: 'guest',
+          last_seen_at: new Date().toISOString(),
+        };
+        try {
+          await fetch(usersRestUrl(), {
+            method: 'POST',
+            headers: {
+              apikey: markerCloudConfig.anonKey,
+              'Content-Type': 'application/json',
+              Prefer: 'return=minimal',
+            },
+            body: JSON.stringify(payload),
+          });
+        } catch (error) {
+          console.error('Unable to register guest user:', error);
+        }
+
         return guestId;
+      };
+
+      const guestNumberFromId = (id) => {
+        const match = String(id).match(/guest-(\d+)/);
+        return match ? parseInt(match[1], 10) : null;
       };
 
       const nameColorHash = (str) => {
@@ -356,15 +415,6 @@
         }
         const h = Math.abs(hash) % 360;
         return `hsl(${h}, 70%, 55%)`;
-      };
-
-      const anonymousNumberFromId = (id) => {
-        let hash = 0;
-        for (let i = 0; i < id.length; i++) {
-          hash = ((hash << 5) - hash) + id.charCodeAt(i);
-          hash |= 0;
-        }
-        return Math.abs(hash) % 99 + 1;
       };
 
       const upsertPresence = async (userId, displayName, role, projectId, projectName, layoutId, layoutName) => {
@@ -380,7 +430,7 @@
         };
         console.log('[Presence] Upserting:', userId, displayName, role, projectName, layoutName);
         try {
-          // Try update first
+          // Try update first with return=representation to check if any row was affected
           const updateResponse = await fetch(
             `${presenceRestUrl()}?user_id=eq.${encodeURIComponent(userId)}`,
             {
@@ -388,26 +438,30 @@
               headers: {
                 apikey: markerCloudConfig.anonKey,
                 'Content-Type': 'application/json',
-                Prefer: 'return=minimal',
+                Prefer: 'return=representation',
               },
               body: JSON.stringify(payload),
             }
           );
-          if (updateResponse.ok) {
+          const updateData = await updateResponse.json().catch(() => []);
+          if (Array.isArray(updateData) && updateData.length > 0) {
             console.log('[Presence] Updated existing row:', userId);
             return;
           }
-          console.log('[Presence] Update returned', updateResponse.status, 'trying insert');
+          console.log('[Presence] PATCH affected 0 rows, inserting new row');
           // If update affected no rows (user doesn't exist yet), insert
-          await fetch(presenceRestUrl(), {
+          const insertResponse = await fetch(presenceRestUrl(), {
             method: 'POST',
             headers: {
               apikey: markerCloudConfig.anonKey,
               'Content-Type': 'application/json',
-              Prefer: 'resolution=merge-duplicates,return=minimal',
+              Prefer: 'return=minimal',
             },
             body: JSON.stringify(payload),
           });
+          if (!insertResponse.ok) {
+            console.error('[Presence] Insert failed:', insertResponse.status, await insertResponse.text().catch(() => ''));
+          }
         } catch (error) {
           console.error('Unable to upsert presence:', error);
         }
@@ -427,8 +481,10 @@
       const fetchPresence = async () => {
         try {
           const cutoff = new Date(Date.now() - presenceStaleMs).toISOString();
+          const projectId = activeProject?.id || defaultProjectId;
+          const layoutId = layouts[selectedIndex]?.id || 'layout-1';
           const response = await fetch(
-            `${presenceRestUrl()}?updated_at=gt.${encodeURIComponent(cutoff)}&order=updated_at.desc`,
+            `${presenceRestUrl()}?project_id=eq.${encodeURIComponent(projectId)}&layout_id=eq.${encodeURIComponent(layoutId)}&updated_at=gt.${encodeURIComponent(cutoff)}&order=updated_at.desc`,
             { headers: { apikey: markerCloudConfig.anonKey } }
           );
           if (!response.ok) {
@@ -464,21 +520,25 @@
               headers: {
                 apikey: markerCloudConfig.anonKey,
                 'Content-Type': 'application/json',
-                Prefer: 'return=minimal',
+                Prefer: 'return=representation',
               },
               body: JSON.stringify(payload),
             }
           );
-          if (updateResponse.ok) return;
-          await fetch(usersRestUrl(), {
+          const updateData = await updateResponse.json().catch(() => []);
+          if (Array.isArray(updateData) && updateData.length > 0) return;
+          const insertResponse = await fetch(usersRestUrl(), {
             method: 'POST',
             headers: {
               apikey: markerCloudConfig.anonKey,
               'Content-Type': 'application/json',
-              Prefer: 'resolution=merge-duplicates,return=minimal',
+              Prefer: 'return=minimal',
             },
             body: JSON.stringify(payload),
           });
+          if (!insertResponse.ok) {
+            console.error('[Users] Insert failed:', insertResponse.status, await insertResponse.text().catch(() => ''));
+          }
         } catch (error) {
           console.error('Unable to upsert user:', error);
         }
@@ -498,22 +558,22 @@
         }
       };
 
-      const startPresence = () => {
+      const startPresence = async () => {
         stopPresenceTimers();
 
         const isSignedIn = Boolean(authSession);
         presenceUserId = isSignedIn
           ? (authSession.user.id || 'user-unknown')
-          : ensureGuestId();
+          : await ensureGuestId();
         presenceDisplayName = isSignedIn
           ? (displayNameFromEmail(authSession.user.email) || 'User')
-          : `Anonymous ${anonymousNumberFromId(presenceUserId)}`;
+          : `Anonymous ${guestNumberFromId(presenceUserId) || 1}`;
         presenceRole = isSignedIn ? authSession.user.role : 'guest';
 
         const active = activeProject || { id: defaultProjectId, name: 'Park View Label' };
         const current = layouts[selectedIndex] || { id: 'layout-1', name: 'Layout 1' };
 
-        upsertPresence(
+        await upsertPresence(
           presenceUserId,
           presenceDisplayName,
           presenceRole,
@@ -523,14 +583,12 @@
           current.name
         );
 
-        if (isSignedIn) {
-          upsertUser(
-            presenceUserId,
-            authSession.user.email,
-            presenceDisplayName,
-            presenceRole
-          );
-        }
+        await upsertUser(
+          presenceUserId,
+          isSignedIn ? authSession.user.email : null,
+          presenceDisplayName,
+          presenceRole
+        );
 
         presenceHeartbeatTimer = setInterval(() => {
           upsertPresence(
@@ -548,7 +606,7 @@
           refreshPresenceUI();
         }, presenceFetchMs);
 
-        refreshPresenceUI();
+        await refreshPresenceUI();
       };
 
       const stopPresenceTimers = () => {
@@ -570,14 +628,14 @@
           presenceDisplayName = null;
           presenceRole = null;
         }
-        refreshPresenceUI();
+        await refreshPresenceUI();
       };
 
-      const updatePresenceLocation = () => {
+      const updatePresenceLocation = async () => {
         if (!presenceUserId) return;
         const active = activeProject || { id: defaultProjectId, name: 'Park View Label' };
         const current = layouts[selectedIndex] || { id: 'layout-1', name: 'Layout 1' };
-        upsertPresence(
+        await upsertPresence(
           presenceUserId,
           presenceDisplayName,
           presenceRole,
@@ -586,7 +644,8 @@
           current.id,
           current.name
         );
-        refreshPresenceUI();
+        await refreshPresenceUI();
+      };
       };
 
       const escapeHtml = (text) => {
@@ -656,8 +715,10 @@
         });
 
         // Merge: show all registered users, mark online ones
+        // Signed-in users + guests are all tracked, but presence rows only include
+        // users that are currently "present" in this project/layout.
+        const allKnownUsers = allUsers.filter((u) => u.role !== 'guest');
         const signedInUsers = allUsers.filter((u) => u.role !== 'guest');
-        const onlineCount = presenceRows.filter((r) => r.role !== 'guest').length;
         const guestCount = presenceRows.filter((r) => r.role === 'guest').length;
 
         // Total online (signed-in + guests)
