@@ -7,7 +7,7 @@
   <title>Park View Label | MQuest</title>
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body data-workspace-role="guest">
   <div class="app-shell">
     <header class="topbar">
       <div class="brand">
@@ -20,11 +20,37 @@
       </div>
       <div class="topbar-right">
         <div class="live-status"><span class="status-dot" aria-hidden="true"></span>Workspace ready</div>
+        <div class="live-users" id="liveUsers" hidden>
+          <button class="live-users-button" id="liveUsersButton" type="button" aria-expanded="false" aria-haspopup="dialog">
+            <span class="live-users-dot" aria-hidden="true"></span>
+            <span class="live-users-label">Online</span>
+            <strong id="liveUserCount">0</strong>
+          </button>
+          <div class="live-users-popover" id="liveUsersPopover" role="dialog" aria-labelledby="liveUsersTitle" hidden>
+            <div class="live-users-heading">
+              <strong id="liveUsersTitle">Live users</strong>
+              <span>Signed-in users</span>
+            </div>
+            <ul class="live-users-list" id="liveUsersList">
+              <li class="live-users-empty">No signed-in users online.</li>
+            </ul>
+          </div>
+        </div>
         <div class="topbar-clock" aria-label="Current date and time">
           <time id="clockTime"></time>
           <span id="clockDate"></span>
         </div>
-        <div class="avatar" aria-label="MQuest">MQ</div>
+        <div class="account-menu" id="accountMenu">
+          <button class="avatar" id="accountButton" type="button" aria-label="Open guest account menu" aria-haspopup="dialog" aria-expanded="false" title="Account">
+            MQ
+          </button>
+          <div class="account-popover" id="accountPopover" role="dialog" aria-labelledby="accountName" hidden>
+            <div class="account-popover-heading" id="accountName">Guest</div>
+            <p class="account-popover-copy" id="accountDescription">Guest access to the project workspace</p>
+            <button class="account-popover-action" id="accountSignIn" type="button">Sign In</button>
+            <button class="account-popover-action secondary" id="accountSignOut" type="button" hidden>Sign Out</button>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -105,6 +131,9 @@
             <div class="zoom-controls" aria-label="Image zoom controls">
               <button class="icon-button marker-toggle" id="markerToggle" type="button" aria-label="Place marker" aria-pressed="false" title="Place marker">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>
+              </button>
+              <button class="icon-button move-marker-toggle" id="moveMarkerToggle" type="button" aria-label="Move marker" aria-pressed="false" title="Move marker">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18M3 12h18"/><path d="m8 7 4-4 4 4m-8 10 4 4 4-4M7 8l-4 4 4 4m10-8 4 4-4 4"/></svg>
               </button>
               <span class="zoom-divider" aria-hidden="true"></span>
               <button class="icon-button" id="zoomOut" type="button" aria-label="Zoom out" title="Zoom out">
@@ -216,6 +245,80 @@
       </main>
     </div>
   </div>
+  <main class="login-screen" id="loginScreen" hidden>
+    <section class="login-visual" aria-label="MQuest building safety monitoring">
+      <div class="login-brand">
+        <img src="images/mquestlogo.png" alt="MQuest">
+        <span>BUILDING INTELLIGENCE</span>
+      </div>
+      <div class="login-hero-copy">
+        <span class="login-hero-pill"><span aria-hidden="true"></span> FIRE &amp; LIFE SAFETY</span>
+        <h1>Safer buildings.<br>Smarter decisions.</h1>
+        <p>One connected view of fire safety systems and the infrastructure that keeps your building running.</p>
+      </div>
+      <div class="login-building-scene" aria-hidden="true">
+        <svg viewBox="0 0 620 350" fill="none">
+          <path d="M37 316h546" stroke="white" stroke-opacity=".22" stroke-width="2"/>
+          <path d="M138 316V92l153-58v282" fill="#102b4b" stroke="#8cc9f2" stroke-opacity=".8" stroke-width="2"/>
+          <path d="M291 316V116l120-47v247" fill="#0c2442" stroke="#8cc9f2" stroke-opacity=".58" stroke-width="2"/>
+          <path d="M411 316V143l72-27v200" fill="#102b4b" stroke="#8cc9f2" stroke-opacity=".42" stroke-width="2"/>
+          <path d="M138 145h153M138 199h153M138 253h153M291 168h120M291 222h120M291 276h120M411 195h72M411 248h72" stroke="#8cc9f2" stroke-opacity=".55" stroke-width="2"/>
+          <path d="M165 112h22v18h-22zm47-18h22v18h-22zm47-18h13v18h-13zM165 166h22v18h-22zm47-18h22v18h-22zm47-18h13v18h-13zM165 220h22v18h-22zm47-18h22v18h-22zm47-18h13v18h-13zM315 136h19v18h-19zm43-17h19v18h-19zM315 190h19v18h-19zm43-17h19v18h-19zM315 244h19v18h-19zm43-17h19v18h-19zM431 162h14v18h-14zm28-11h14v18h-14zM431 216h14v18h-14zm28-11h14v18h-14z" fill="#64b5ec" fill-opacity=".72"/>
+          <path d="M261 316v-42a30 30 0 0 1 60 0v42" stroke="#e2f4ff" stroke-opacity=".75" stroke-width="2"/>
+          <circle cx="428" cy="72" r="32" fill="#1677c8" fill-opacity=".22"/>
+          <circle cx="428" cy="72" r="22" fill="#1677c8" stroke="#a9ddff" stroke-width="2"/>
+          <path d="M428 58c-7 9-10 14-10 19a10 10 0 0 0 20 0c0-5-3-10-10-19Z" fill="white"/>
+          <path d="M428 73c-3 4-4 6-4 8a4 4 0 0 0 8 0c0-2-1-4-4-8Z" fill="#1677c8"/>
+          <circle cx="113" cy="280" r="5" fill="#53d6a0"/>
+          <path d="M113 280h-48" stroke="#53d6a0" stroke-width="2" stroke-dasharray="4 5"/>
+        </svg>
+        <div class="login-status-card">
+          <span class="login-status-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="m9 12 2 2 4-4"/></svg>
+          </span>
+          <span><strong>Protection in focus</strong><small>Connected building systems</small></span>
+          <span class="login-status-dot" aria-hidden="true"></span>
+        </div>
+      </div>
+      <div class="login-visual-footer"><span>INNOVATE</span><i></i><span>ENABLE</span><i></i><span>EMPOWER</span></div>
+    </section>
+    <section class="login-panel" aria-labelledby="loginTitle">
+      <div class="login-card">
+        <div class="login-card-kicker">
+          <span class="login-lock-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg>
+          </span>
+          SECURE WORKSPACE
+        </div>
+        <p class="login-eyebrow">WELCOME TO MQUEST</p>
+        <h2 id="loginTitle">Sign in to your workspace</h2>
+        <p class="login-intro">Enter your MQuest account details to continue to your project dashboard.</p>
+        <form class="login-form" id="loginForm">
+          <label for="loginUsername">Username</label>
+          <div class="login-input-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+            <input id="loginUsername" name="username" type="email" placeholder="name@company.com" autocomplete="username" required>
+          </div>
+          <label for="loginPassword">Password</label>
+          <div class="login-input-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg>
+            <input id="loginPassword" name="password" type="password" placeholder="Enter your password" autocomplete="current-password" required>
+          </div>
+          <p class="login-feedback" id="loginFeedback" role="alert" aria-live="polite" hidden></p>
+          <button class="login-submit" id="loginSubmit" type="submit">
+            <span id="loginSubmitLabel">Login</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+          </button>
+        </form>
+        <div class="login-separator"><span>OR</span></div>
+        <button class="continue-guest" id="continueAsGuest" type="button">
+          Continue as a Guest
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+        </button>
+        <p class="login-help">Need an account? Contact your MQuest workspace administrator.</p>
+      </div>
+    </section>
+  </main>
   <div class="layout-confirm" id="layoutConfirm" hidden role="dialog" aria-modal="true" aria-labelledby="layoutConfirmTitle">
     <div class="layout-confirm-panel">
       <h2 id="layoutConfirmTitle">Delete layout?</h2>

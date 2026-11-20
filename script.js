@@ -12,6 +12,27 @@
       const markerLayer = document.getElementById('markerLayer');
       const markerEditor = document.getElementById('markerEditor');
       const markerToggle = document.getElementById('markerToggle');
+      const moveMarkerToggle = document.getElementById('moveMarkerToggle');
+      const appShell = document.querySelector('.app-shell');
+      const loginScreen = document.getElementById('loginScreen');
+      const accountMenu = document.getElementById('accountMenu');
+      const accountButton = document.getElementById('accountButton');
+      const accountPopover = document.getElementById('accountPopover');
+      const accountName = document.getElementById('accountName');
+      const accountDescription = document.getElementById('accountDescription');
+      const accountSignIn = document.getElementById('accountSignIn');
+      const accountSignOut = document.getElementById('accountSignOut');
+      const liveUsers = document.getElementById('liveUsers');
+      const liveUsersButton = document.getElementById('liveUsersButton');
+      const liveUsersPopover = document.getElementById('liveUsersPopover');
+      const liveUserCount = document.getElementById('liveUserCount');
+      const liveUsersList = document.getElementById('liveUsersList');
+      const loginForm = document.getElementById('loginForm');
+      const loginUsername = document.getElementById('loginUsername');
+      const loginPassword = document.getElementById('loginPassword');
+      const loginFeedback = document.getElementById('loginFeedback');
+      const loginSubmit = document.getElementById('loginSubmit');
+      const loginSubmitLabel = document.getElementById('loginSubmitLabel');
       const markerPhotoInput = document.getElementById('markerPhoto');
       const markerPhotoGallery = document.getElementById('markerPhotoGallery');
       const photoViewer = document.getElementById('photoViewer');
@@ -32,6 +53,8 @@
         currentHostname || 'parkviewdashboard';
       const legacyMarkerStorageKey = 'mquest-parkview-markers';
       const markerStorageKey = `${legacyMarkerStorageKey}:${markerCloudSiteId}`;
+      const authSessionStorageKey = `mquest-parkview-auth:${markerCloudSiteId}`;
+      const authBaseUrl = markerCloudConfig.restUrl.replace(/\/rest\/v1\/?$/, '');
       const defaultProjectId = 'park-view-label';
       const projectStorageKey = `mquest-parkview-projects:${markerCloudSiteId}`;
       const activeProjectStorageKey = `mquest-parkview-active-project:${markerCloudSiteId}`;
@@ -84,6 +107,14 @@
       let panY = 0;
       let drag = null;
       let markerMode = false;
+      let markerMoveMode = false;
+      let movingMarkerId = null;
+      let authSession = null;
+      let authRefreshTimer = null;
+      let authRefreshInProgress = false;
+      let presenceSessionId = null;
+      let presenceHeartbeatTimer = null;
+      let liveUsersRefreshTimer = null;
       let draftMarkerPoint = null;
       let editingMarkerId = null;
       let markerPanelPoint = null;
@@ -170,6 +201,227 @@
         toast.classList.add('show');
         clearTimeout(toastTimer);
         toastTimer = setTimeout(() => toast.classList.remove('show'), 3200);
+      };
+
+      const authRequest = async (path, payload, accessToken) => {
+        const headers = {
+          apikey: markerCloudConfig.anonKey,
+          'Content-Type': 'application/json'
+        };
+        if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+        let response;
+        try {
+          response = await fetch(`${authBaseUrl}${path}`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload)
+          });
+        } catch (error) {
+          throw new Error('Could not reach the secure sign-in service. Check your connection and try again.');
+        }
+
+        let result;
+        try {
+          result = await response.json();
+        } catch (error) {
+          throw new Error('The sign-in service returned an invalid response. Please try again.');
+        }
+        if (!result || typeof result !== 'object') {
+          throw new Error('The sign-in service returned an invalid response. Please try again.');
+        }
+        if (!response.ok) {
+          const message = result.msg || result.message || result.error_description || result.error;
+          const authError = new Error(typeof message === 'string' ? message : 'Sign in failed. Please try again.');
+          authError.status = response.status;
+          throw authError;
+        }
+        return result;
+      };
+
+      const getSupabaseHeaders = (headers = {}) => ({
+        apikey: markerCloudConfig.anonKey,
+        ...(authSession ? { Authorization: `Bearer ${authSession.access_token}` } : {}),
+        ...headers
+      });
+
+      const createAuthSession = (result, previousSession) => {
+        const user = result.user || (previousSession && previousSession.user);
+        const expiresIn = Number(result.expires_in);
+        if (typeof result.access_token !== 'string' || typeof result.refresh_token !== 'string' ||
+          !user || typeof user.email !== 'string' || !Number.isFinite(expiresIn) || expiresIn <= 0) {
+          throw new Error('The sign-in service returned incomplete session details.');
+        }
+        return {
+          access_token: result.access_token,
+          refresh_token: result.refresh_token,
+          expires_at: Date.now() + expiresIn * 1000,
+          user: {
+            id: typeof user.id === 'string' ? user.id : '',
+            email: user.email,
+            role: user.app_metadata && ['owner', 'editor'].includes(user.app_metadata.parkview_role)
+              ? user.app_metadata.parkview_role
+              : 'viewer'
+          }
+        };
+      };
+
+      const isWorkspaceEditor = () =>
+        Boolean(authSession && ['owner', 'editor'].includes(authSession.user.role));
+      const isWorkspaceOwner = () => Boolean(authSession && authSession.user.role === 'owner');
+      const requireWorkspaceEditor = () => {
+        if (isWorkspaceEditor()) return true;
+        announce('Sign in with an MQuest editor account to make changes.', true);
+        return false;
+      };
+
+      const displayNameFromEmail = (email) => {
+        if (!email) return '';
+        const localPart = String(email).split('@')[0];
+        return localPart || email;
+      };
+
+      const updateAccountMenu = () => {
+        const isSignedIn = Boolean(authSession);
+        const role = isSignedIn ? authSession.user.role : 'guest';
+        document.body.dataset.workspaceRole = role;
+        const displayName = isSignedIn
+          ? (displayNameFromEmail(authSession.user.email) || 'User')
+          : 'Guest';
+        accountName.textContent = displayName;
+        accountDescription.textContent = role === 'owner'
+          ? 'Workspace owner'
+          : role === 'editor'
+            ? 'Project editor'
+            : isSignedIn ? 'View-only account' : 'Guest access to the project workspace';
+        accountSignIn.hidden = isSignedIn;
+        accountSignOut.hidden = !isSignedIn;
+        liveUsers.hidden = !isWorkspaceOwner();
+        accountButton.setAttribute('aria-label', isSignedIn
+          ? `Open account menu for ${displayName}`
+          : 'Open guest account menu');
+      };
+
+      const setLoginFeedback = (message) => {
+        loginFeedback.textContent = message;
+        loginFeedback.hidden = !message;
+      };
+
+      const closeAccountPopover = () => {
+        accountPopover.hidden = true;
+        accountButton.setAttribute('aria-expanded', 'false');
+      };
+
+      const showLoginScreen = () => {
+        closeAccountPopover();
+        loginForm.reset();
+        setLoginFeedback('');
+        appShell.hidden = true;
+        loginScreen.hidden = false;
+        window.requestAnimationFrame(() => loginUsername.focus());
+      };
+
+      const showProjectWorkspace = () => {
+        loginScreen.hidden = true;
+        appShell.hidden = false;
+        accountButton.focus();
+      };
+
+      const setAuthSession = (session) => {
+        authSession = session;
+        updateAccountMenu();
+        startPresence();
+        let sessionSaved = true;
+        try {
+          localStorage.setItem(authSessionStorageKey, JSON.stringify(session));
+        } catch (error) {
+          console.error('Unable to save the sign-in session:', error);
+          announce('Signed in, but this browser could not save your session. You may need to sign in again.', true);
+          sessionSaved = false;
+        }
+        scheduleAuthRefresh();
+        return sessionSaved;
+      };
+
+      const clearAuthSession = () => {
+        const previousSession = authSession;
+        if (previousSession) stopPresence(previousSession);
+        authSession = null;
+        clearTimeout(authRefreshTimer);
+        authRefreshTimer = null;
+        updateAccountMenu();
+        try {
+          localStorage.removeItem(authSessionStorageKey);
+        } catch (error) {
+          console.error('Unable to clear the saved sign-in session:', error);
+          announce('Signed out here, but the saved session could not be cleared from this browser.', true);
+        }
+      };
+
+      const refreshAuthSession = async () => {
+        if (!authSession || authRefreshInProgress) return;
+        authRefreshInProgress = true;
+        const previousSession = authSession;
+        try {
+          const result = await authRequest(
+            '/auth/v1/token?grant_type=refresh_token',
+            { refresh_token: previousSession.refresh_token }
+          );
+          if (authSession === previousSession) {
+            setAuthSession(createAuthSession(result, previousSession));
+          }
+        } catch (error) {
+          console.error('Unable to refresh the sign-in session:', error);
+          if (authSession === previousSession) {
+            if (error.status === 400 || error.status === 401 || Date.now() >= previousSession.expires_at) {
+              clearAuthSession();
+              announce('Your MQuest session expired. Please sign in again.', true);
+            } else {
+              const retryDelay = Math.min(15000, Math.max(1000, previousSession.expires_at - Date.now()));
+              authRefreshTimer = setTimeout(refreshAuthSession, retryDelay);
+            }
+          }
+        } finally {
+          authRefreshInProgress = false;
+        }
+      };
+
+      const scheduleAuthRefresh = () => {
+        clearTimeout(authRefreshTimer);
+        if (!authSession) return;
+        const refreshDelay = Math.max(0, authSession.expires_at - Date.now() - 60000);
+        authRefreshTimer = setTimeout(refreshAuthSession, refreshDelay);
+      };
+
+      const restoreAuthSession = () => {
+        let savedSession;
+        try {
+          const savedValue = localStorage.getItem(authSessionStorageKey);
+          if (!savedValue) {
+            updateAccountMenu();
+            return;
+          }
+          savedSession = JSON.parse(savedValue);
+          if (!savedSession || typeof savedSession.access_token !== 'string' ||
+            typeof savedSession.refresh_token !== 'string' || !Number.isFinite(savedSession.expires_at) ||
+            !savedSession.user || typeof savedSession.user.email !== 'string') {
+            throw new Error('The saved sign-in session has an invalid format.');
+          }
+        } catch (error) {
+          console.error('Unable to restore the sign-in session:', error);
+          clearAuthSession();
+          announce('The saved sign-in session could not be restored. Please sign in again.', true);
+          return;
+        }
+
+        authSession = savedSession;
+        if (!['owner', 'editor'].includes(authSession.user.role)) authSession.user.role = 'viewer';
+        updateAccountMenu();
+        startPresence();
+        if (authSession.expires_at <= Date.now() + 60000) {
+          refreshAuthSession();
+        } else {
+          scheduleAuthRefresh();
+        }
       };
 
       const getProjectForLayoutId = (layoutId) =>
@@ -675,6 +927,11 @@
           const pin = document.createElement('button');
           pin.type = 'button';
           pin.className = 'map-marker';
+          if (markerMoveMode) {
+            const isSelected = marker.id === movingMarkerId;
+            pin.classList.toggle('is-selected', isSelected);
+            pin.setAttribute('aria-pressed', String(isSelected));
+          }
           pin.style.left = `${bounds.left + marker.x * bounds.width}px`;
           pin.style.top = `${bounds.top + marker.y * bounds.height}px`;
           const markerName = marker.product || marker.location || 'Layout detail';
@@ -689,6 +946,16 @@
           }
           pin.addEventListener('click', (event) => {
             event.stopPropagation();
+            if (markerMoveMode) {
+              movingMarkerId = marker.id;
+              markerLayer.querySelectorAll('.map-marker').forEach((existingPin) => {
+                const isSelected = existingPin === pin;
+                existingPin.classList.toggle('is-selected', isSelected);
+                existingPin.setAttribute('aria-pressed', String(isSelected));
+              });
+              announce(`Selected ${markerName}. Click its new position on the layout.`);
+              return;
+            }
             const markerX = bounds.left + marker.x * bounds.width;
             const markerY = bounds.top + marker.y * bounds.height;
             const screenX = stage.clientWidth / 2 + (markerX - stage.clientWidth / 2) * zoom + panX;
@@ -706,6 +973,16 @@
         markerToggle.setAttribute('aria-label', enabled ? 'Cancel marker placement' : 'Place marker');
         markerToggle.title = enabled ? 'Cancel marker placement' : 'Place marker';
         stage.classList.toggle('marker-placement-mode', enabled);
+      };
+
+      const setMarkerMoveMode = (enabled) => {
+        markerMoveMode = enabled;
+        movingMarkerId = null;
+        moveMarkerToggle.setAttribute('aria-pressed', String(enabled));
+        moveMarkerToggle.setAttribute('aria-label', enabled ? 'Cancel marker move' : 'Move marker');
+        moveMarkerToggle.title = enabled ? 'Cancel marker move' : 'Move marker';
+        stage.classList.toggle('marker-move-mode', enabled);
+        renderMarkers();
       };
 
       const setPhotoZoom = (nextZoom) => {
@@ -1037,11 +1314,14 @@
           document.getElementById('prevLayout').disabled = true;
           document.getElementById('nextLayout').disabled = true;
           markerToggle.disabled = true;
+          moveMarkerToggle.disabled = true;
+          setMarkerMoveMode(false);
           renderList();
           renderMarkers();
           return;
         }
         markerToggle.disabled = false;
+        moveMarkerToggle.disabled = false;
         const layout = layouts[selectedIndex];
         image.src = layout.src;
         image.alt = `${activeProject.name} ${layout.name}`;
@@ -1058,6 +1338,7 @@
 
       const selectLayout = (index) => {
         closeMarkerEditor();
+        setMarkerMoveMode(false);
         if (!layouts.length) {
           updateSelectedLayout();
           return;
@@ -1862,12 +2143,33 @@
           return;
         }
         closeMarkerEditor();
+        setMarkerMoveMode(false);
         setMarkerMode(true);
         announce('Marker mode is on. Click a spot on the layout to add a marker.');
       });
 
-      stage.addEventListener('click', (event) => {
-        if (!markerMode || event.target.closest('button, .marker-editor')) return;
+      moveMarkerToggle.addEventListener('click', () => {
+        if (markerMoveMode) {
+          setMarkerMoveMode(false);
+          announce('Marker move cancelled.');
+          return;
+        }
+        if (!getCurrentMarkers().length) {
+          announce('Add a marker before moving it.', true);
+          return;
+        }
+        closeMarkerEditor();
+        setMarkerMode(false);
+        setMarkerMoveMode(true);
+        announce('Move marker mode is on. Select a marker, then click its new position on the layout.');
+      });
+
+      stage.addEventListener('click', async (event) => {
+        if ((!markerMode && !markerMoveMode) || event.target.closest('button, .marker-editor')) return;
+        if (markerMoveMode && !movingMarkerId) {
+          announce('Select the marker you want to move first.', true);
+          return;
+        }
         const bounds = getImageBounds();
         if (!bounds) {
           announce('Wait for the layout image to finish loading before placing a marker.', true);
@@ -1880,6 +2182,26 @@
         const y = (localY - bounds.top) / bounds.height;
         if (x < 0 || x > 1 || y < 0 || y > 1) {
           announce('Place the marker on the layout image.', true);
+          return;
+        }
+        if (markerMoveMode) {
+          const marker = getCurrentMarkers().find((item) => item.id === movingMarkerId);
+          if (!marker) {
+            setMarkerMoveMode(false);
+            announce('Could not find the selected marker. Please try again.', true);
+            return;
+          }
+          marker.x = x;
+          marker.y = y;
+          setMarkerMoveMode(false);
+          const saveResult = await persistMarkersEverywhere();
+          if (!saveResult.localSaved) {
+            announce('Marker moved for this session, but the change could not be saved to browser storage.', true);
+          } else if (!saveResult.cloudSaved) {
+            announce('Marker moved on this device, but it could not sync to your other devices.', true);
+          } else {
+            announce('Marker moved and synced across devices.');
+          }
           return;
         }
         draftMarkerPoint = { x, y };
@@ -2131,10 +2453,80 @@
       stage.addEventListener('pointerup', endDrag);
       stage.addEventListener('pointercancel', endDrag);
 
+      accountButton.addEventListener('click', () => {
+        const shouldOpen = accountPopover.hidden;
+        accountPopover.hidden = !shouldOpen;
+        accountButton.setAttribute('aria-expanded', String(shouldOpen));
+      });
+      accountSignIn.addEventListener('click', showLoginScreen);
+      accountSignOut.addEventListener('click', async () => {
+        const session = authSession;
+        closeAccountPopover();
+        clearAuthSession();
+        if (!session) return;
+        accountSignOut.disabled = true;
+        try {
+          const response = await fetch(`${authBaseUrl}/auth/v1/logout`, {
+            method: 'POST',
+            headers: {
+              apikey: markerCloudConfig.anonKey,
+              Authorization: `Bearer ${session.access_token}`
+            }
+          });
+          if (!response.ok) throw new Error(`The sign-in service returned HTTP ${response.status}.`);
+          announce('Signed out of your MQuest account.');
+        } catch (error) {
+          console.error('Unable to revoke the sign-in session:', error);
+          announce('Signed out on this device, but the server could not revoke the session.', true);
+        } finally {
+          accountSignOut.disabled = false;
+        }
+      });
+      loginForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (loginSubmit.disabled) return;
+        setLoginFeedback('');
+        loginSubmit.disabled = true;
+        loginSubmitLabel.textContent = 'Signing in...';
+        try {
+          const result = await authRequest('/auth/v1/token?grant_type=password', {
+            email: loginUsername.value.trim().toLowerCase(),
+            password: loginPassword.value
+          });
+          const session = createAuthSession(result);
+          const sessionSaved = setAuthSession(session);
+          loginForm.reset();
+          setLoginFeedback('');
+          showProjectWorkspace();
+          if (sessionSaved) announce(`Signed in as ${displayNameFromEmail(session.user.email) || 'User'}.`);
+        } catch (error) {
+          setLoginFeedback(error.message || 'Sign in failed. Please try again.');
+          loginPassword.value = '';
+          loginPassword.focus();
+        } finally {
+          loginSubmit.disabled = false;
+          loginSubmitLabel.textContent = 'Login';
+        }
+      });
+      document.getElementById('continueAsGuest').addEventListener('click', () => {
+        loginForm.reset();
+        setLoginFeedback('');
+        showProjectWorkspace();
+      });
+      document.addEventListener('click', (event) => {
+        if (!accountMenu.contains(event.target)) closeAccountPopover();
+      });
+
       document.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && !photoViewer.hidden) {
           event.preventDefault();
           closePhotoViewer();
+          return;
+        }
+        if (event.key === 'Escape' && !accountPopover.hidden) {
+          event.preventDefault();
+          closeAccountPopover();
+          accountButton.focus();
           return;
         }
         if (!photoViewer.hidden) return;
@@ -2152,6 +2544,7 @@
 
       image.addEventListener('load', renderMarkers);
       new ResizeObserver(renderMarkers).observe(stage);
+      restoreAuthSession();
       restoreMarkers();
       updateProjectControls();
       selectLayout(0);
