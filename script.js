@@ -378,6 +378,7 @@
           layout_name: layoutName,
           updated_at: new Date().toISOString(),
         };
+        console.log('[Presence] Upserting:', userId, displayName, role, projectName, layoutName);
         try {
           // Try update first
           const updateResponse = await fetch(
@@ -392,7 +393,11 @@
               body: JSON.stringify(payload),
             }
           );
-          if (updateResponse.ok) return;
+          if (updateResponse.ok) {
+            console.log('[Presence] Updated existing row:', userId);
+            return;
+          }
+          console.log('[Presence] Update returned', updateResponse.status, 'trying insert');
           // If update affected no rows (user doesn't exist yet), insert
           await fetch(presenceRestUrl(), {
             method: 'POST',
@@ -426,9 +431,14 @@
             `${presenceRestUrl()}?updated_at=gt.${encodeURIComponent(cutoff)}&order=updated_at.desc`,
             { headers: { apikey: markerCloudConfig.anonKey } }
           );
-          if (!response.ok) return [];
+          if (!response.ok) {
+            console.error('Presence fetch failed:', response.status, await response.text().catch(() => ''));
+            return [];
+          }
           const rows = await response.json();
-          return Array.isArray(rows) ? rows : [];
+          const data = Array.isArray(rows) ? rows : [];
+          console.log('[Presence] Fetched online users:', data.length, data.map((r) => r.display_name));
+          return data;
         } catch (error) {
           console.error('Unable to fetch presence:', error);
           return [];
@@ -630,6 +640,14 @@
         const presenceRows = await fetchPresence();
         const allUsers = await fetchAllUsers();
         const currentUserId = presenceUserId;
+
+        console.log('[Presence] refreshPresenceUI:', {
+          presenceRows: presenceRows.length,
+          presenceRowsNames: presenceRows.map((r) => r.display_name),
+          allUsers: allUsers.length,
+          allUsersNames: allUsers.map((u) => u.display_name),
+          currentUserId: currentUserId,
+        });
 
         // Build a map of online users by user_id
         const onlineById = new Map();
