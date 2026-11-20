@@ -482,59 +482,112 @@
       pointer-events: none;
     }
 
-    .map-marker {
-      position: absolute;
-      display: grid;
-      width: 40px;
-      height: 40px;
-      padding: 0;
-      place-items: center;
-      border: 0;
-      color: white;
-      background: var(--blue);
-      border-radius: 50%;
-      cursor: pointer;
-      pointer-events: auto;
-      transform: translate(-50%, -100%) scale(calc(1 / max(var(--zoom), 1.4)));
-      filter: drop-shadow(0 2px 3px rgb(18 34 54 / 32%));
-    }
+    
+/* =========================================
+   GOOGLE MAPS STYLE MARKERS
+========================================= */
 
-    .map-marker:hover { color: var(--blue-dark); }
-    .map-marker.is-selected {
-      color: var(--blue-dark);
-      transform: translate(-50%, -100%) scale(1.25) scale(calc(1 / max(var(--zoom), 1.4)));
-      filter: drop-shadow(0 0 3px white) drop-shadow(0 2px 3px rgb(18 34 54 / 32%));
-    }
-    .map-marker svg {
-      width: 18px;
-      height: 18px;
-      position: relative;
-      top: 50%;
-      transform: translateY(-50%);
-    }
+.map-marker {
+    position: absolute;
 
-    .map-marker-device-id {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      transform-origin: center center;
-      min-width: 24px;
-      padding: 6px 12px;
-      font-size: 14px;
-      font-weight: 900;
-      font-variant-numeric: tabular-nums;
-      line-height: 1.15;
-      color: white;
-      background: var(--blue);
-      border-radius: 50%;
-      text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
-      text-align: center;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      pointer-events: none;
-      text-shadow: 0 1px 1px rgb(3 30 55 / 40%);
-    }
+    width: 38px;
+    height: 48px;
+
+    padding: 0;
+    border: none;
+    background: transparent;
+
+    display: grid;
+    place-items: center;
+
+    cursor: pointer;
+    pointer-events: auto;
+
+    transform:
+        translate(-50%, -100%)
+        scale(calc(1 / max(var(--zoom), 1.4)));
+
+    transform-origin: bottom center;
+
+    filter:
+        drop-shadow(0 2px 3px rgb(18 34 54 / 35%));
+
+    transition:
+        filter 0.2s ease,
+        transform 0.2s ease;
+}
+
+/* SVG location pin */
+.map-marker svg {
+    position: absolute;
+
+    inset: 0;
+
+    width: 100%;
+    height: 100%;
+
+    overflow: visible;
+}
+
+/* Hover effect */
+.map-marker:hover {
+    filter:
+        drop-shadow(0 3px 5px rgb(18 34 54 / 45%))
+        brightness(1.08);
+}
+
+/* Selected marker */
+.map-marker.is-selected {
+    transform:
+        translate(-50%, -100%)
+        scale(1.15)
+        scale(calc(1 / max(var(--zoom), 1.4)));
+
+    filter:
+        drop-shadow(0 0 4px white)
+        drop-shadow(0 3px 5px rgb(18 34 54 / 40%));
+
+    z-index: 10;
+}
+
+/* =========================================
+   DEVICE ID INSIDE MARKER
+========================================= */
+
+.map-marker-device-id {
+    position: absolute;
+
+    top: 36%;
+    left: 50%;
+
+    transform: translate(-50%, -50%);
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    width: 21px;
+    height: 21px;
+
+    padding: 0;
+
+    color: #1677e8;
+    background: transparent;
+
+    font-family: Arial, sans-serif;
+    font-size: 10px;
+    font-weight: 900;
+
+    line-height: 1;
+    text-align: center;
+
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+
+    pointer-events: none;
+    user-select: none;
+    text-shadow: none;
+}
 
     .zoom-controls {
       position: absolute;

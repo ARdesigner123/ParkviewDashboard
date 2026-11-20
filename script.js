@@ -1442,55 +1442,145 @@
         };
       };
 
-      const renderMarkers = () => {
-        markerLayer.replaceChildren();
-        if (!layouts.length) return;
-        const bounds = getImageBounds();
-        if (!bounds) return;
+      
+const renderMarkers = () => {
+    markerLayer.replaceChildren();
 
-        getCurrentMarkers().forEach((marker) => {
-          const pin = document.createElement('button');
-          pin.type = 'button';
-          pin.className = 'map-marker';
-          if (markerMoveMode) {
+    if (!layouts.length) return;
+
+    const bounds = getImageBounds();
+    if (!bounds) return;
+
+    getCurrentMarkers().forEach((marker) => {
+
+        // Create marker button
+        const pin = document.createElement('button');
+
+        pin.type = 'button';
+        pin.className = 'map-marker';
+
+        // Selected marker when moving
+        if (markerMoveMode) {
             const isSelected = marker.id === movingMarkerId;
+
             pin.classList.toggle('is-selected', isSelected);
             pin.setAttribute('aria-pressed', String(isSelected));
-          }
-          pin.style.left = `${bounds.left + marker.x * bounds.width}px`;
-          pin.style.top = `${bounds.top + marker.y * bounds.height}px`;
-          const markerName = marker.product || marker.location || 'Layout detail';
-          pin.setAttribute('aria-label', `Marker: ${markerName}${marker.deviceId ? `, device ID ${marker.deviceId}` : ''}`);
-          pin.title = marker.product || marker.location || 'Layout marker';
-          pin.innerHTML = '<svg viewBox="0 0 24 28" fill="none" aria-hidden="true"><path d="M12 27s10-9.2 10-16A10 10 0 1 0 2 11c0 6.8 10 16 10 16Z" fill="currentColor"/><circle cx="12" cy="10.5" r="3.2" fill="white"/></svg>';
-          if (marker.deviceId) {
+        }
+
+        // Preserve original marker positioning
+        pin.style.left = `${bounds.left + marker.x * bounds.width}px`;
+        pin.style.top = `${bounds.top + marker.y * bounds.height}px`;
+
+        // Marker accessibility and tooltip
+        const markerName = marker.product || marker.location || 'Layout detail';
+
+        pin.setAttribute(
+            'aria-label',
+            `Marker: ${markerName}${marker.deviceId ? `, device ID ${marker.deviceId}` : ''}`
+        );
+
+        pin.title = marker.product || marker.location || 'Layout marker';
+
+        // Google Maps-style blue location pin
+        const markerSVG = document.createElementNS(
+            'http://www.w3.org/2000/svg',
+            'svg'
+        );
+
+        markerSVG.setAttribute('viewBox', '0 0 48 60');
+        markerSVG.setAttribute('aria-hidden', 'true');
+
+        // Blue teardrop-shaped pin
+        const pinShape = document.createElementNS(
+            'http://www.w3.org/2000/svg',
+            'path'
+        );
+
+        pinShape.setAttribute(
+            'd',
+            'M24 2 C11.85 2 3 11.1 3 23 C3 37.5 24 58 24 58 S45 37.5 45 23 C45 11.1 36.15 2 24 2 Z'
+        );
+
+        pinShape.setAttribute('fill', '#1677e8');
+        pinShape.setAttribute('stroke', '#ffffff');
+        pinShape.setAttribute('stroke-width', '1.5');
+
+        // White circular centre
+        const pinCentre = document.createElementNS(
+            'http://www.w3.org/2000/svg',
+            'circle'
+        );
+
+        pinCentre.setAttribute('cx', '24');
+        pinCentre.setAttribute('cy', '22');
+        pinCentre.setAttribute('r', '12');
+        pinCentre.setAttribute('fill', '#ffffff');
+
+        // Add SVG elements
+        markerSVG.append(pinShape, pinCentre);
+
+        pin.append(markerSVG);
+
+        // Device ID inside the white circle
+        if (marker.deviceId) {
+
             const badge = document.createElement('span');
+
             badge.className = 'map-marker-device-id';
-            badge.textContent = marker.deviceId;
+
+            badge.textContent = String(marker.deviceId);
+
             pin.append(badge);
-          }
-          pin.addEventListener('click', (event) => {
+        }
+
+        // Original marker click functionality
+        pin.addEventListener('click', (event) => {
+
             event.stopPropagation();
+
             if (markerMoveMode) {
-              movingMarkerId = marker.id;
-              markerLayer.querySelectorAll('.map-marker').forEach((existingPin) => {
-                const isSelected = existingPin === pin;
-                existingPin.classList.toggle('is-selected', isSelected);
-                existingPin.setAttribute('aria-pressed', String(isSelected));
-              });
-              announce(`Selected ${markerName}. Click its new position on the layout.`);
-              return;
+
+                movingMarkerId = marker.id;
+
+                markerLayer.querySelectorAll('.map-marker').forEach((existingPin) => {
+
+                    const isSelected = existingPin === pin;
+
+                    existingPin.classList.toggle('is-selected', isSelected);
+
+                    existingPin.setAttribute('aria-pressed', String(isSelected));
+
+                });
+
+                announce(`Selected ${markerName}. Click its new position on the layout.`);
+
+                return;
             }
+
             const markerX = bounds.left + marker.x * bounds.width;
             const markerY = bounds.top + marker.y * bounds.height;
-            const screenX = stage.clientWidth / 2 + (markerX - stage.clientWidth / 2) * zoom + panX;
-            const screenY = stage.clientHeight / 2 + (markerY - stage.clientHeight / 2) * zoom + panY;
+
+            const screenX =
+                stage.clientWidth / 2 +
+                (markerX - stage.clientWidth / 2) * zoom +
+                panX;
+
+            const screenY =
+                stage.clientHeight / 2 +
+                (markerY - stage.clientHeight / 2) * zoom +
+                panY;
+
             setMarkerMode(false);
+
             showMarkerDetails(screenX, screenY, marker);
-          });
-          markerLayer.append(pin);
+
         });
-      };
+
+        // Add marker to layout
+        markerLayer.append(pin);
+
+    });
+};
 
       const setMarkerMode = (enabled) => {
         markerMode = enabled;
