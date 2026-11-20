@@ -494,27 +494,33 @@
       background: transparent;
       cursor: pointer;
       pointer-events: auto;
-      transform: translate(-50%, -100%);
+      transform: translate(-50%, -100%) scale(calc(1 / var(--zoom)));
       filter: drop-shadow(0 2px 3px rgb(18 34 54 / 32%));
     }
 
     .map-marker:hover { color: var(--blue-dark); }
     .map-marker.is-selected {
       color: var(--blue-dark);
-      transform: translate(-50%, -100%) scale(1.25);
+      transform: translate(-50%, -100%) scale(1.25) scale(calc(1 / var(--zoom)));
       filter: drop-shadow(0 0 3px white) drop-shadow(0 2px 3px rgb(18 34 54 / 32%));
     }
-    .map-marker svg { width: 16px; height: 16px; position: relative; top: 50%; transform: translateY(-50%); }
+    .map-marker svg {
+      width: 16px;
+      height: 16px;
+      position: relative;
+      top: 50%;
+      transform: translateY(-50%);
+    }
 
     .map-marker-device-id {
       position: absolute;
-      top: 50%;
+      top: -22%;
       left: 50%;
-      transform: translate(-50%, -50%) scale(calc(1 / var(--zoom)));
+      transform: translate(-50%, -50%);
       transform-origin: center center;
-      min-width: 16px;
-      padding: 2px 4px;
-      font-size: 8px;
+      min-width: 14px;
+      padding: 1.5px 3px;
+      font-size: 7px;
       font-weight: 900;
       font-variant-numeric: tabular-nums;
       line-height: 1.15;
