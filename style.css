@@ -483,6 +483,7 @@
     }
 
     
+
 /* =========================================
    GOOGLE MAPS STYLE MARKERS
 ========================================= */
@@ -490,8 +491,9 @@
 .map-marker {
     position: absolute;
 
-    width: 38px;
-    height: 48px;
+    /* Smaller markers to reduce overlap */
+    width: 32px;
+    height: 40px;
 
     padding: 0;
     border: none;
@@ -513,14 +515,15 @@
         drop-shadow(0 2px 3px rgb(18 34 54 / 35%));
 
     transition:
-        filter 0.2s ease,
-        transform 0.2s ease;
+        transform 0.2s ease,
+        filter 0.2s ease;
+
+    z-index: 1;
 }
 
 /* SVG location pin */
 .map-marker svg {
     position: absolute;
-
     inset: 0;
 
     width: 100%;
@@ -529,25 +532,58 @@
     overflow: visible;
 }
 
-/* Hover effect */
+/* =========================================
+   HOVER EFFECT
+========================================= */
+
 .map-marker:hover {
+    transform:
+        translate(-50%, -100%)
+        scale(calc(1.25 / max(var(--zoom), 1.4)));
+
     filter:
-        drop-shadow(0 3px 5px rgb(18 34 54 / 45%))
-        brightness(1.08);
+        drop-shadow(0 4px 7px rgb(18 34 54 / 45%))
+        brightness(1.12);
+
+    z-index: 20;
 }
 
-/* Selected marker */
+/* =========================================
+   SELECTED MARKER
+========================================= */
+
 .map-marker.is-selected {
     transform:
         translate(-50%, -100%)
-        scale(1.15)
-        scale(calc(1 / max(var(--zoom), 1.4)));
+        scale(calc(1.15 / max(var(--zoom), 1.4)));
 
     filter:
         drop-shadow(0 0 4px white)
         drop-shadow(0 3px 5px rgb(18 34 54 / 40%));
 
-    z-index: 10;
+    z-index: 15;
+}
+
+/* Selected marker gets even bigger on hover */
+.map-marker.is-selected:hover {
+    transform:
+        translate(-50%, -100%)
+        scale(calc(1.35 / max(var(--zoom), 1.4)));
+
+    filter:
+        drop-shadow(0 0 5px white)
+        drop-shadow(0 4px 8px rgb(18 34 54 / 50%))
+        brightness(1.12);
+
+    z-index: 25;
+}
+
+/* Keyboard accessibility */
+.map-marker:focus-visible {
+    outline: 3px solid #ffb020;
+    outline-offset: 4px;
+    border-radius: 50%;
+    z-index: 30;
 }
 
 /* =========================================
@@ -566,8 +602,8 @@
     align-items: center;
     justify-content: center;
 
-    width: 21px;
-    height: 21px;
+    width: 19px;
+    height: 19px;
 
     padding: 0;
 
@@ -575,7 +611,7 @@
     background: transparent;
 
     font-family: Arial, sans-serif;
-    font-size: 10px;
+    font-size: 9px;
     font-weight: 900;
 
     line-height: 1;
