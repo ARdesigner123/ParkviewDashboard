@@ -645,7 +645,6 @@
         );
         await refreshPresenceUI();
       };
-      };
 
       const escapeHtml = (text) => {
         const div = document.createElement('div');
