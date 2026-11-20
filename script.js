@@ -338,7 +338,6 @@
       const presenceFetchMs = 5000;
 
       const guestIdKey = `mquest-parkview-guest-id:${markerCloudSiteId}`;
-      const guestCounterKey = `mquest-parkview-guest-counter:${markerCloudSiteId}`;
 
       const ensureGuestId = async () => {
         if (guestId) return guestId;
