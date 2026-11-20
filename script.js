@@ -368,23 +368,40 @@
       };
 
       const upsertPresence = async (userId, displayName, role, projectId, projectName, layoutId, layoutName) => {
+        const payload = {
+          user_id: userId,
+          display_name: displayName,
+          role: role,
+          project_id: projectId,
+          project_name: projectName,
+          layout_id: layoutId,
+          layout_name: layoutName,
+          updated_at: new Date().toISOString(),
+        };
         try {
-          await fetch(presenceRestUrl() + `?on_conflict=user_id`, {
+          // Try update first
+          const updateResponse = await fetch(
+            `${presenceRestUrl()}?user_id=eq.${encodeURIComponent(userId)}`,
+            {
+              method: 'PATCH',
+              headers: {
+                apikey: markerCloudConfig.anonKey,
+                'Content-Type': 'application/json',
+                Prefer: 'return=minimal',
+              },
+              body: JSON.stringify(payload),
+            }
+          );
+          if (updateResponse.ok) return;
+          // If update affected no rows (user doesn't exist yet), insert
+          await fetch(presenceRestUrl(), {
             method: 'POST',
             headers: {
               apikey: markerCloudConfig.anonKey,
               'Content-Type': 'application/json',
+              Prefer: 'resolution=merge-duplicates,return=minimal',
             },
-            body: JSON.stringify({
-              user_id: userId,
-              display_name: displayName,
-              role: role,
-              project_id: projectId,
-              project_name: projectName,
-              layout_id: layoutId,
-              layout_name: layoutName,
-              updated_at: new Date().toISOString(),
-            }),
+            body: JSON.stringify(payload),
           });
         } catch (error) {
           console.error('Unable to upsert presence:', error);
@@ -422,20 +439,35 @@
         `${getMarkerCloudRestUrl()}/parkview_users`;
 
       const upsertUser = async (userId, email, displayName, role) => {
+        const payload = {
+          user_id: userId,
+          email: email,
+          display_name: displayName,
+          role: role,
+          last_seen_at: new Date().toISOString(),
+        };
         try {
-          await fetch(usersRestUrl() + `?on_conflict=user_id`, {
+          const updateResponse = await fetch(
+            `${usersRestUrl()}?user_id=eq.${encodeURIComponent(userId)}`,
+            {
+              method: 'PATCH',
+              headers: {
+                apikey: markerCloudConfig.anonKey,
+                'Content-Type': 'application/json',
+                Prefer: 'return=minimal',
+              },
+              body: JSON.stringify(payload),
+            }
+          );
+          if (updateResponse.ok) return;
+          await fetch(usersRestUrl(), {
             method: 'POST',
             headers: {
               apikey: markerCloudConfig.anonKey,
               'Content-Type': 'application/json',
+              Prefer: 'resolution=merge-duplicates,return=minimal',
             },
-            body: JSON.stringify({
-              user_id: userId,
-              email: email,
-              display_name: displayName,
-              role: role,
-              last_seen_at: new Date().toISOString(),
-            }),
+            body: JSON.stringify(payload),
           });
         } catch (error) {
           console.error('Unable to upsert user:', error);
@@ -2899,6 +2931,15 @@
           accountSignOut.disabled = false;
         }
       });
+
+      liveUsersButton.addEventListener('click', () => {
+        const shouldOpen = liveUsersPopover.hidden;
+        closeAccountPopover();
+        liveUsersPopover.hidden = !shouldOpen;
+        liveUsersButton.setAttribute('aria-expanded', String(shouldOpen));
+        if (shouldOpen) refreshPresenceUI();
+      });
+
       loginForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (loginSubmit.disabled) return;
@@ -2932,6 +2973,10 @@
       });
       document.addEventListener('click', (event) => {
         if (!accountMenu.contains(event.target)) closeAccountPopover();
+        if (!liveUsersButton.contains(event.target) && !liveUsersPopover.contains(event.target)) {
+          liveUsersPopover.hidden = true;
+          liveUsersButton.setAttribute('aria-expanded', 'false');
+        }
       });
 
       document.addEventListener('keydown', (event) => {
@@ -2944,6 +2989,12 @@
           event.preventDefault();
           closeAccountPopover();
           accountButton.focus();
+          return;
+        }
+        if (event.key === 'Escape' && !liveUsersPopover.hidden) {
+          event.preventDefault();
+          liveUsersPopover.hidden = true;
+          liveUsersButton.setAttribute('aria-expanded', 'false');
           return;
         }
         if (!photoViewer.hidden) return;
