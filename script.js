@@ -50,7 +50,7 @@
       const markerCloudConfig = window.PARKVIEW_SUPABASE;
       const currentHostname = window.location.hostname.toLowerCase();
       const markerCloudSiteId = (markerCloudConfig.siteIds || {})[currentHostname] ||
-        currentHostname || 'parkviewdashboard';
+        'parkviewdashboard';
       const legacyMarkerStorageKey = 'mquest-parkview-markers';
       const markerStorageKey = `${legacyMarkerStorageKey}:${markerCloudSiteId}`;
       const authSessionStorageKey = `mquest-parkview-auth:${markerCloudSiteId}`;
@@ -324,6 +324,16 @@
         loginScreen.hidden = true;
         appShell.hidden = false;
         accountButton.focus();
+      };
+
+      const startPresence = () => {
+        // Presence / "who is online" tracking requires Supabase Realtime to be enabled
+        // and the Supabase JS client. This app uses fetch() only, so presence is stubbed
+        // to prevent crashes. The live-users panel will remain empty until Realtime is added.
+      };
+
+      const stopPresence = () => {
+        // Stubbed to match startPresence above.
       };
 
       const setAuthSession = (session) => {
@@ -2565,7 +2575,7 @@
       markerSyncPromise = refreshSharedMarkers();
       setInterval(() => {
         markerSyncPromise = refreshSharedMarkers();
-        const projectSync = projectCloudSyncAvailable ? syncProjectsFromCloud() : Promise.resolve();
+        const projectSync = syncProjectsFromCloud();
         layoutSyncPromise = projectSync.then(() => syncLayoutsFromCloud()).catch((error) => {
           if (!projectSyncErrorAnnounced) {
             console.error('Unable to sync shared projects or layouts:', error);
@@ -2577,7 +2587,7 @@
       document.addEventListener('visibilitychange', () => {
         if (!document.hidden) {
           markerSyncPromise = refreshSharedMarkers();
-          const projectSync = projectCloudSyncAvailable ? syncProjectsFromCloud() : Promise.resolve();
+          const projectSync = syncProjectsFromCloud();
           layoutSyncPromise = projectSync.then(() => syncLayoutsFromCloud()).catch((error) => {
             if (!projectSyncErrorAnnounced) {
               console.error('Unable to sync shared projects or layouts:', error);
@@ -2589,7 +2599,7 @@
       });
       window.addEventListener('focus', () => {
         markerSyncPromise = refreshSharedMarkers();
-        const projectSync = projectCloudSyncAvailable ? syncProjectsFromCloud() : Promise.resolve();
+        const projectSync = syncProjectsFromCloud();
         layoutSyncPromise = projectSync.then(() => syncLayoutsFromCloud()).catch((error) => {
           if (!projectSyncErrorAnnounced) {
             console.error('Unable to sync shared projects or layouts:', error);
