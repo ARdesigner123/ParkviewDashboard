@@ -112,9 +112,12 @@
       let authSession = null;
       let authRefreshTimer = null;
       let authRefreshInProgress = false;
-      let presenceSessionId = null;
+      let presenceUserId = null;
+      let presenceDisplayName = null;
+      let presenceRole = null;
       let presenceHeartbeatTimer = null;
       let liveUsersRefreshTimer = null;
+      let guestId = null;
       let draftMarkerPoint = null;
       let editingMarkerId = null;
       let markerPanelPoint = null;
@@ -326,14 +329,416 @@
         accountButton.focus();
       };
 
-      const startPresence = () => {
-        // Presence / "who is online" tracking requires Supabase Realtime to be enabled
-        // and the Supabase JS client. This app uses fetch() only, so presence is stubbed
-        // to prevent crashes. The live-users panel will remain empty until Realtime is added.
+      const presenceRestUrl = () =>
+        `${getMarkerCloudRestUrl()}/parkview_presence`;
+
+      const presenceStaleMs = 30000;
+      const presenceHeartbeatMs = 10000;
+      const presenceFetchMs = 5000;
+
+      const guestIdKey = `mquest-parkview-guest-id:${markerCloudSiteId}`;
+
+      const ensureGuestId = () => {
+        if (guestId) return guestId;
+        guestId = localStorage.getItem(guestIdKey);
+        if (!guestId) {
+          guestId = 'guest-' + Math.random().toString(36).slice(2, 10);
+          try { localStorage.setItem(guestIdKey, guestId); } catch (e) {}
+        }
+        return guestId;
       };
 
-      const stopPresence = () => {
-        // Stubbed to match startPresence above.
+      const nameColorHash = (str) => {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+          hash = ((hash << 5) - hash) + str.charCodeAt(i);
+          hash |= 0;
+        }
+        const h = Math.abs(hash) % 360;
+        return `hsl(${h}, 70%, 55%)`;
+      };
+
+      const anonymousNumberFromId = (id) => {
+        let hash = 0;
+        for (let i = 0; i < id.length; i++) {
+          hash = ((hash << 5) - hash) + id.charCodeAt(i);
+          hash |= 0;
+        }
+        return Math.abs(hash) % 99 + 1;
+      };
+
+      const upsertPresence = async (userId, displayName, role, projectId, projectName, layoutId, layoutName) => {
+        try {
+          await fetch(presenceRestUrl() + `?on_conflict=user_id`, {
+            method: 'POST',
+            headers: {
+              apikey: markerCloudConfig.anonKey,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              user_id: userId,
+              display_name: displayName,
+              role: role,
+              project_id: projectId,
+              project_name: projectName,
+              layout_id: layoutId,
+              layout_name: layoutName,
+              updated_at: new Date().toISOString(),
+            }),
+          });
+        } catch (error) {
+          console.error('Unable to upsert presence:', error);
+        }
+      };
+
+      const deletePresence = async (userId) => {
+        try {
+          await fetch(`${presenceRestUrl()}?user_id=eq.${encodeURIComponent(userId)}`, {
+            method: 'DELETE',
+            headers: { apikey: markerCloudConfig.anonKey },
+          });
+        } catch (error) {
+          console.error('Unable to delete presence:', error);
+        }
+      };
+
+      const fetchPresence = async () => {
+        try {
+          const cutoff = new Date(Date.now() - presenceStaleMs).toISOString();
+          const response = await fetch(
+            `${presenceRestUrl()}?updated_at=gt.${encodeURIComponent(cutoff)}&order=updated_at.desc`,
+            { headers: { apikey: markerCloudConfig.anonKey } }
+          );
+          if (!response.ok) return [];
+          const rows = await response.json();
+          return Array.isArray(rows) ? rows : [];
+        } catch (error) {
+          console.error('Unable to fetch presence:', error);
+          return [];
+        }
+      };
+
+      const usersRestUrl = () =>
+        `${getMarkerCloudRestUrl()}/parkview_users`;
+
+      const upsertUser = async (userId, email, displayName, role) => {
+        try {
+          await fetch(usersRestUrl() + `?on_conflict=user_id`, {
+            method: 'POST',
+            headers: {
+              apikey: markerCloudConfig.anonKey,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              user_id: userId,
+              email: email,
+              display_name: displayName,
+              role: role,
+              last_seen_at: new Date().toISOString(),
+            }),
+          });
+        } catch (error) {
+          console.error('Unable to upsert user:', error);
+        }
+      };
+
+      const fetchAllUsers = async () => {
+        try {
+          const response = await fetch(usersRestUrl(), {
+            headers: { apikey: markerCloudConfig.anonKey },
+          });
+          if (!response.ok) return [];
+          const rows = await response.json();
+          return Array.isArray(rows) ? rows : [];
+        } catch (error) {
+          console.error('Unable to fetch all users:', error);
+          return [];
+        }
+      };
+
+      const startPresence = () => {
+        stopPresenceTimers();
+
+        const isSignedIn = Boolean(authSession);
+        presenceUserId = isSignedIn
+          ? (authSession.user.id || 'user-unknown')
+          : ensureGuestId();
+        presenceDisplayName = isSignedIn
+          ? (displayNameFromEmail(authSession.user.email) || 'User')
+          : `Anonymous ${anonymousNumberFromId(presenceUserId)}`;
+        presenceRole = isSignedIn ? authSession.user.role : 'guest';
+
+        const active = activeProject || { id: defaultProjectId, name: 'Park View Label' };
+        const current = layouts[selectedIndex] || { id: 'layout-1', name: 'Layout 1' };
+
+        upsertPresence(
+          presenceUserId,
+          presenceDisplayName,
+          presenceRole,
+          active.id,
+          active.name,
+          current.id,
+          current.name
+        );
+
+        if (isSignedIn) {
+          upsertUser(
+            presenceUserId,
+            authSession.user.email,
+            presenceDisplayName,
+            presenceRole
+          );
+        }
+
+        presenceHeartbeatTimer = setInterval(() => {
+          upsertPresence(
+            presenceUserId,
+            presenceDisplayName,
+            presenceRole,
+            active.id,
+            active.name,
+            current.id,
+            current.name
+          );
+        }, presenceHeartbeatMs);
+
+        liveUsersRefreshTimer = setInterval(() => {
+          refreshPresenceUI();
+        }, presenceFetchMs);
+
+        refreshPresenceUI();
+      };
+
+      const stopPresenceTimers = () => {
+        if (presenceHeartbeatTimer) {
+          clearInterval(presenceHeartbeatTimer);
+          presenceHeartbeatTimer = null;
+        }
+        if (liveUsersRefreshTimer) {
+          clearInterval(liveUsersRefreshTimer);
+          liveUsersRefreshTimer = null;
+        }
+      };
+
+      const stopPresence = async () => {
+        stopPresenceTimers();
+        if (presenceUserId) {
+          await deletePresence(presenceUserId);
+          presenceUserId = null;
+          presenceDisplayName = null;
+          presenceRole = null;
+        }
+        refreshPresenceUI();
+      };
+
+      const updatePresenceLocation = () => {
+        if (!presenceUserId) return;
+        const active = activeProject || { id: defaultProjectId, name: 'Park View Label' };
+        const current = layouts[selectedIndex] || { id: 'layout-1', name: 'Layout 1' };
+        upsertPresence(
+          presenceUserId,
+          presenceDisplayName,
+          presenceRole,
+          active.id,
+          active.name,
+          current.id,
+          current.name
+        );
+        refreshPresenceUI();
+      };
+
+      const escapeHtml = (text) => {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      };
+
+      const renderPresenceUserItem = (user, isCurrentUser, isOnline) => {
+        const color = nameColorHash(user.display_name || user.user_id);
+        const roleLabel = user.role === 'owner' ? 'Owner' : user.role === 'editor' ? 'Editor' : 'Viewer';
+        const currentBadge = isCurrentUser ? ' <span class="presence-you">(you)</span>' : '';
+        const statusDot = isOnline
+          ? '<span class="status-indicator online"></span>'
+          : '<span class="status-indicator offline"></span>';
+        const location = isOnline
+          ? `${escapeHtml(user.project_name || 'Project')} · ${escapeHtml(user.layout_name || 'Layout')}`
+          : 'Offline';
+        const locationClass = isOnline ? 'live-user-location' : 'live-user-location offline';
+        return `
+          <li class="live-user-item${isCurrentUser ? ' current-user' : ''}${!isOnline ? ' offline-user' : ''}" style="--user-color: ${color}">
+            <div class="live-user-avatar" style="background: ${color}" aria-hidden="true">
+              ${(user.display_name || 'U').charAt(0).toUpperCase()}
+            </div>
+            <div class="live-user-info">
+              <div class="live-user-name">${statusDot} ${escapeHtml(user.display_name || 'User')}${currentBadge}</div>
+              <div class="${locationClass}">${location}</div>
+              <div class="live-user-role">${escapeHtml(roleLabel)}</div>
+            </div>
+          </li>
+        `;
+      };
+
+      const renderPresenceGuestItem = (user) => {
+        const color = nameColorHash(user.user_id);
+        return `
+          <li class="live-user-item guest-user" style="--user-color: ${color}">
+            <div class="live-user-avatar" style="background: ${color}" aria-hidden="true">
+              ${(user.display_name || 'A').charAt(0).toUpperCase()}
+            </div>
+            <div class="live-user-info">
+              <div class="live-user-name">${escapeHtml(user.display_name || 'Anonymous')}</div>
+              <div class="live-user-location">${escapeHtml(user.project_name || 'Project')} · ${escapeHtml(user.layout_name || 'Layout')}</div>
+              <div class="live-user-role">Guest</div>
+            </div>
+          </li>
+        `;
+      };
+
+      const refreshPresenceUI = async () => {
+        const presenceRows = await fetchPresence();
+        const allUsers = await fetchAllUsers();
+        const currentUserId = presenceUserId;
+
+        // Build a map of online users by user_id
+        const onlineById = new Map();
+        presenceRows.forEach((r) => {
+          onlineById.set(r.user_id, r);
+        });
+
+        // Merge: show all registered users, mark online ones
+        const signedInUsers = allUsers.filter((u) => u.role !== 'guest');
+        const onlineCount = presenceRows.filter((r) => r.role !== 'guest').length;
+        const guestCount = presenceRows.filter((r) => r.role === 'guest').length;
+
+        // Total online (signed-in + guests)
+        const totalOnline = presenceRows.length;
+        liveUserCount.textContent = totalOnline;
+        liveUsersButton.setAttribute('aria-label', `${totalOnline} user${totalOnline !== 1 ? 's' : ''} online`);
+
+        const list = liveUsersList;
+        list.replaceChildren();
+        if (signedInUsers.length === 0) {
+          const empty = document.createElement('li');
+          empty.className = 'live-users-empty';
+          empty.textContent = 'No registered users.';
+          list.appendChild(empty);
+        } else {
+          // Online users first, then offline
+          const sorted = [...signedInUsers].sort((a, b) => {
+            const aOnline = onlineById.has(a.user_id);
+            const bOnline = onlineById.has(b.user_id);
+            if (aOnline && !bOnline) return -1;
+            if (!aOnline && bOnline) return 1;
+            return 0;
+          });
+          sorted.forEach((user) => {
+            const isOnline = onlineById.has(user.user_id);
+            const presence = isOnline ? onlineById.get(user.user_id) : null;
+            const li = document.createElement('li');
+            li.innerHTML = renderPresenceUserItem({
+              ...user,
+              project_name: presence ? presence.project_name : user.project_name || 'Project',
+              layout_name: presence ? presence.layout_name : user.layout_name || 'Layout',
+            }, user.user_id === currentUserId, isOnline);
+            list.appendChild(li);
+          });
+        }
+
+        // Guests section (online guests only, from presence)
+        const guestSection = document.getElementById('liveUsersGuests');
+        const guestList = document.getElementById('liveUsersGuestList');
+        const guestHeading = guestSection.querySelector('.live-users-guest-heading');
+        guestHeading.textContent = `Guests (${guestCount})`;
+        guestList.replaceChildren();
+        if (guestCount === 0) {
+          const empty = document.createElement('li');
+          empty.className = 'live-users-empty';
+          empty.textContent = 'No guests online.';
+          guestList.appendChild(empty);
+        } else {
+          presenceRows.filter((r) => r.role === 'guest').forEach((user) => {
+            const li = document.createElement('li');
+            li.innerHTML = renderPresenceGuestItem(user);
+            guestList.appendChild(li);
+          });
+        }
+
+        guestSection.hidden = guestCount === 0;
+
+        const liveUsersBlock = document.getElementById('liveUsers');
+        if (totalOnline === 0 && signedInUsers.length === 0) {
+          liveUsersBlock.hidden = true;
+        } else {
+          liveUsersBlock.hidden = false;
+        }
+
+        renderPresenceAvatars(presenceRows);
+      };
+
+      const renderPresenceAvatars = (rows) => {
+        const layer = document.getElementById('presenceLayer');
+        layer.replaceChildren();
+
+        const currentLayout = layouts[selectedIndex];
+        const currentProject = activeProject;
+
+        if (!currentLayout || !currentProject) {
+          layer.setAttribute('aria-hidden', 'true');
+          return;
+        }
+
+        const here = rows.filter((r) =>
+          r.project_id === currentProject.id && r.layout_id === currentLayout.id && r.user_id !== presenceUserId
+        );
+
+        if (here.length > 0) {
+          layer.removeAttribute('aria-hidden');
+        } else {
+          layer.setAttribute('aria-hidden', 'true');
+        }
+
+        here.forEach((user, index) => {
+          const color = nameColorHash(user.display_name || user.user_id);
+          const avatar = document.createElement('div');
+          avatar.className = 'presence-avatar';
+          avatar.style.left = `calc(10% + ${index * 34}px)`;
+          avatar.style.top = '12px';
+          avatar.title = `${user.display_name} is viewing this layout`;
+          avatar.innerHTML = (user.display_name || 'U').charAt(0).toUpperCase();
+          layer.appendChild(avatar);
+        });
+
+        document.querySelectorAll('.layout-item').forEach((item, index) => {
+          const oldAvatar = item.querySelector('.layout-presence-avatars');
+          if (oldAvatar) oldAvatar.remove();
+
+          const layout = layouts[index];
+          const usersHere = rows.filter((r) =>
+            r.project_id === currentProject.id && r.layout_id === layout.id
+          );
+
+          if (usersHere.length > 0) {
+            const avatarWrap = document.createElement('div');
+            avatarWrap.className = 'layout-presence-avatars';
+            usersHere.slice(0, 3).forEach((user) => {
+              const color = nameColorHash(user.display_name || user.user_id);
+              const av = document.createElement('div');
+              av.className = 'layout-presence-avatar';
+              av.style.background = color;
+              av.title = `${user.display_name} is here`;
+              av.innerHTML = (user.display_name || 'U').charAt(0).toUpperCase();
+              avatarWrap.appendChild(av);
+            });
+            if (usersHere.length > 3) {
+              const more = document.createElement('div');
+              more.className = 'layout-presence-avatar more';
+              more.textContent = `+${usersHere.length - 3}`;
+              more.style.background = 'var(--muted)';
+              avatarWrap.appendChild(more);
+            }
+            item.appendChild(avatarWrap);
+          }
+        });
       };
 
       const setAuthSession = (session) => {
@@ -515,6 +920,7 @@
         resetView();
         updateProjectControls();
         updateSelectedLayout();
+        updatePresenceLocation();
       };
 
       const updateTransform = () => {
@@ -1357,6 +1763,7 @@
         selectedIndex = index;
         resetView();
         updateSelectedLayout();
+        updatePresenceLocation();
       };
 
       const zoomAt = (nextZoom, clientX, clientY) => {

@@ -29,11 +29,17 @@
           <div class="live-users-popover" id="liveUsersPopover" role="dialog" aria-labelledby="liveUsersTitle" hidden>
             <div class="live-users-heading">
               <strong id="liveUsersTitle">Live users</strong>
-              <span>Signed-in users</span>
+              <span id="liveUsersSubtitle">Signed-in users</span>
             </div>
             <ul class="live-users-list" id="liveUsersList">
               <li class="live-users-empty">No signed-in users online.</li>
             </ul>
+            <div class="live-users-guests" id="liveUsersGuests" hidden>
+              <div class="live-users-guest-heading">Guests</div>
+              <ul class="live-users-guest-list" id="liveUsersGuestList">
+                <li class="live-users-empty">No guests online.</li>
+              </ul>
+            </div>
           </div>
         </div>
         <div class="topbar-clock" aria-label="Current date and time">
@@ -128,6 +134,7 @@
             <img class="plan-image" id="planImage" src="parkview/layout1.jpg" alt="Park View layout 1" draggable="false">
             <div class="stage-shade" aria-hidden="true"></div>
             <div class="marker-layer" id="markerLayer" aria-label="Layout markers"></div>
+            <div class="presence-layer" id="presenceLayer" aria-hidden="true"></div>
             <div class="zoom-controls" aria-label="Image zoom controls">
               <button class="icon-button marker-toggle" id="markerToggle" type="button" aria-label="Place marker" aria-pressed="false" title="Place marker">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>

@@ -186,13 +186,36 @@
     .live-users-heading strong { color: #17212f; font-size: 13px; }
     .live-users-heading span { color: #8290a1; font-size: 10px; }
     .live-users-list { display: grid; max-height: 270px; gap: 0; overflow-y: auto; margin: 0; padding: 0; list-style: none; }
-    .live-user-row { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 11px 16px; border-bottom: 1px solid #f0f3f6; }
-    .live-user-row:last-child { border-bottom: 0; }
-    .live-user-avatar { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: #155e99; background: #eaf5fd; font-size: 10px; font-weight: 800; text-transform: uppercase; }
-    .live-user-copy { min-width: 0; flex: 1; }
-    .live-user-email { overflow: hidden; color: #28384d; font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
-    .live-user-role { margin-top: 3px; color: #8693a3; font-size: 9px; text-transform: capitalize; }
+    .live-user-item { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 11px 16px; border-bottom: 1px solid #f0f3f6; }
+    .live-user-item:last-child { border-bottom: 0; }
+    .live-user-item.current-user { background: #f0f7ff; }
+    .live-user-avatar { display: grid; width: 30px; height: 30px; flex: 0 0 auto; place-items: center; border-radius: 50%; color: #fff; font-size: 10px; font-weight: 800; text-transform: uppercase; box-shadow: 0 1px 3px rgb(0 0 0 / 0.15); }
+    .live-user-info { min-width: 0; flex: 1; }
+    .live-user-name { overflow: hidden; color: #28384d; font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+    .live-user-name .presence-you { color: #1677c8; font-size: 9px; font-weight: 600; margin-left: 6px; }
+    .live-user-location { color: #8290a1; font-size: 9.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .live-user-role { margin-top: 2px; color: #8693a3; font-size: 8.5px; text-transform: uppercase; letter-spacing: 0.05em; }
     .live-users-empty { padding: 18px 16px; color: #8290a1; font-size: 11px; }
+
+    .status-indicator { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; flex: 0 0 auto; }
+    .status-indicator.online { background: #29b77b; box-shadow: 0 0 0 3px rgba(41, 183, 123, 0.2); }
+    .status-indicator.offline { background: #c3cad3; box-shadow: 0 0 0 3px rgba(195, 202, 211, 0.2); }
+    .live-user-item.offline-user { opacity: 0.65; }
+    .live-user-location.offline { color: #adb3c0; font-style: italic; }
+
+    .live-users-guests { border-top: 1px solid #edf1f5; margin-top: 0; }
+    .live-users-guest-heading { padding: 10px 16px; color: #8290a1; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; border-bottom: 1px solid #edf1f5; background: #f8fafb; }
+    .live-users-guest-list { margin: 0; padding: 0; list-style: none; }
+
+    /* Presence avatars on the plan stage */
+    .presence-layer { position: absolute; inset: 0; pointer-events: none; display: flex; flex-wrap: wrap; padding: 10px; z-index: 15; }
+    .presence-layer[aria-hidden="true"] { display: none; }
+    .presence-avatar { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 10px; font-weight: 800; flex: 0 0 auto; margin-right: 8px; margin-bottom: 8px; box-shadow: 0 2px 6px rgb(0 0 0 / 0.2); border: 2px solid #fff; }
+
+    /* Presence avatars on layout list items */
+    .layout-presence-avatars { display: flex; gap: 4px; margin-left: auto; flex-shrink: 0; }
+    .layout-presence-avatar { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 8px; font-weight: 800; flex: 0 0 auto; box-shadow: 0 1px 3px rgb(0 0 0 / 0.2); border: 1.5px solid #fff; }
+    .layout-presence-avatar.more { background: var(--muted); color: #fff; justify-content: center; }
 
     .workspace {
       display: flex;

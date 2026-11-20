@@ -256,3 +256,89 @@ create policy "Public can delete Parkview marker photos"
   on storage.objects for delete
   to anon, authenticated
   using (bucket_id = 'parkview-marker-photos');
+
+create table if not exists public.parkview_presence (
+  id uuid primary key default gen_random_uuid(),
+  user_id text not null unique,
+  display_name text not null,
+  role text not null default 'guest',
+  project_id text not null,
+  project_name text not null,
+  layout_id text not null,
+  layout_name text not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.parkview_presence enable row level security;
+
+grant select, insert, update, delete
+  on table public.parkview_presence
+  to anon, authenticated;
+
+drop policy if exists "Public can read Parkview presence"
+  on public.parkview_presence;
+create policy "Public can read Parkview presence"
+  on public.parkview_presence for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "Public can upsert Parkview presence"
+  on public.parkview_presence;
+create policy "Public can upsert Parkview presence"
+  on public.parkview_presence for insert
+  to anon, authenticated
+  with check (true);
+
+drop policy if exists "Public can update Parkview presence"
+  on public.parkview_presence;
+create policy "Public can update Parkview presence"
+  on public.parkview_presence for update
+  to anon, authenticated
+  using (true)
+  with check (true);
+
+drop policy if exists "Public can delete Parkview presence"
+  on public.parkview_presence;
+create policy "Public can delete Parkview presence"
+  on public.parkview_presence for delete
+  to anon, authenticated
+  using (true);
+
+create table if not exists public.parkview_users (
+  user_id text primary key,
+  email text,
+  display_name text not null,
+  role text not null default 'viewer',
+  last_seen_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+
+alter table public.parkview_users enable row level security;
+
+grant select, insert, update
+  on table public.parkview_users
+  to anon, authenticated;
+
+drop policy if exists "Public can read Parkview users"
+  on public.parkview_users;
+create policy "Public can read Parkview users"
+  on public.parkview_users for select
+  to anon, authenticated
+  using (true);
+
+drop policy if exists "Public can upsert Parkview users"
+  on public.parkview_users;
+create policy "Public can upsert Parkview users"
+  on public.parkview_users for insert
+  to anon, authenticated
+  with check (true);
+
+drop policy if exists "Public can update Parkview users"
+  on public.parkview_users;
+create policy "Public can update Parkview users"
+  on public.parkview_users for update
+  to anon, authenticated
+  using (true)
+  with check (true);
+
+notify pgrst, 'reload schema';
