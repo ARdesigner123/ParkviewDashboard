@@ -10,7 +10,11 @@
   }
   .map-marker svg { width: 80%; height: 80%; }
   .map-marker-device-id {
-    display: none !important;
+    display: flex !important;
+    width: 14px !important;
+    height: 14px !important;
+    font-size: 7px !important;
+    top: 42% !important;
   }
   .map-marker .device-id-text {
     position: absolute;
@@ -2104,7 +2108,11 @@
   }
   .map-marker svg { width: 80%; height: 80%; }
   .map-marker-device-id {
-    display: none !important;
+    display: flex !important;
+    width: 14px !important;
+    height: 14px !important;
+    font-size: 7px !important;
+    top: 42% !important;
   }
   .map-marker .device-id-text {
     position: absolute;
