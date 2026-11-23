@@ -7,7 +7,8 @@
 --   * Anyone with the site link (guests)  → VIEW projects, layouts, markers, photos
 --   * Signed-in "viewer" accounts         → VIEW, plus appear in the live-users list
 --   * Signed-in "editor" / "owner"        → VIEW + CREATE / EDIT / DELETE
---   * "owner" only                        → see the list of all users
+--   * "owner" only                        → Users panel (active time, guests) and
+--                                           changing other users' roles
 --
 -- Roles come from the user's app_metadata.parkview_role inside their login
 -- token. Users cannot change app_metadata themselves; only you can, with:
@@ -164,8 +165,6 @@ create table if not exists public.parkview_users (
   created_at timestamptz not null default now()
 );
 
--- Old browsers registered every guest in parkview_users; those rows are no longer used.
-delete from public.parkview_users where role = 'guest';
 
 
 -- ---------------------------------------------------------------------
@@ -352,5 +351,213 @@ create policy "Parkview users: users update own row"
   using (user_id = auth.uid()::text)
   with check (user_id = auth.uid()::text and role = public.parkview_effective_role());
 
+
+
+
+-- =====================================================================
+-- Usage tracking: active time for signed-in users and anonymous guests
+-- =====================================================================
+alter table public.parkview_users add column if not exists total_active_seconds bigint not null default 0;
+alter table public.parkview_users add column if not exists first_seen_at timestamptz not null default now();
+alter table public.parkview_users add column if not exists guest_number integer;
+alter table public.parkview_users add column if not exists visit_count integer not null default 1;
+
+create sequence if not exists public.parkview_guest_number_seq;
+
+-- Guest rows from the old version (no guest number, unreliable times) are removed once.
+delete from public.parkview_users where role = 'guest' and guest_number is null;
+
+-- The browser no longer writes parkview_users or presence rows directly;
+-- everything goes through parkview_heartbeat() below, which the database
+-- controls (so active time cannot be faked).
+revoke insert, update on table public.parkview_users from anon, authenticated;
+revoke insert, update on table public.parkview_presence from anon, authenticated;
+
+-- Called every ~15 s while a page is open and visible.
+-- Adds the real time since the previous heartbeat (max 45 s) to the total.
+create or replace function public.parkview_heartbeat(
+  p_client_id text,
+  p_project_id text,
+  p_project_name text,
+  p_layout_id text,
+  p_layout_name text
+)
+returns json
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_user_id text;
+  v_role text;
+  v_email text;
+  v_name text;
+  v_row public.parkview_users;
+begin
+  if v_uid is not null then
+    v_user_id := v_uid::text;
+    v_role := public.parkview_effective_role();
+    v_email := auth.jwt() ->> 'email';
+    v_name := coalesce(nullif(split_part(coalesce(v_email, ''), '@', 1), ''), 'User');
+  else
+    if p_client_id is null or p_client_id !~ '^guest-[A-Za-z0-9-]{8,64}$' then
+      raise exception 'invalid guest id';
+    end if;
+    v_user_id := p_client_id;
+    v_role := 'guest';
+    v_email := null;
+    v_name := null;
+  end if;
+
+  select * into v_row from public.parkview_users where user_id = v_user_id for update;
+
+  if not found then
+    insert into public.parkview_users (user_id, email, display_name, role, guest_number,
+                                       first_seen_at, last_seen_at, total_active_seconds, visit_count)
+    values (
+      v_user_id, v_email,
+      coalesce(v_name, 'Guest'),
+      v_role,
+      case when v_role = 'guest' then nextval('public.parkview_guest_number_seq') end,
+      now(), now(), 0, 1
+    )
+    returning * into v_row;
+    if v_role = 'guest' then
+      update public.parkview_users set display_name = 'Guest #' || v_row.guest_number
+      where user_id = v_user_id returning * into v_row;
+    end if;
+  else
+    update public.parkview_users set
+      total_active_seconds = total_active_seconds + case
+        when now() - last_seen_at <= interval '45 seconds'
+          then greatest(0, floor(extract(epoch from now() - last_seen_at)))::bigint
+        else 0 end,
+      -- A gap of more than 30 minutes counts as a new visit.
+      visit_count = visit_count + case when now() - last_seen_at > interval '30 minutes' then 1 else 0 end,
+      last_seen_at = now(),
+      email = coalesce(v_email, email),
+      display_name = case when v_role = 'guest'
+                          then 'Guest #' || coalesce(guest_number, 0)
+                          else v_name end,
+      role = v_role
+    where user_id = v_user_id
+    returning * into v_row;
+  end if;
+
+  insert into public.parkview_presence (user_id, display_name, role, project_id, project_name,
+                                        layout_id, layout_name, updated_at)
+  values (v_user_id, v_row.display_name, v_role,
+          left(coalesce(p_project_id, ''), 120), left(coalesce(p_project_name, ''), 120),
+          left(coalesce(p_layout_id, ''), 160), left(coalesce(p_layout_name, ''), 160), now())
+  on conflict (user_id) do update set
+    display_name = excluded.display_name,
+    role = excluded.role,
+    project_id = excluded.project_id,
+    project_name = excluded.project_name,
+    layout_id = excluded.layout_id,
+    layout_name = excluded.layout_name,
+    updated_at = now();
+
+  return json_build_object(
+    'user_id', v_row.user_id,
+    'display_name', v_row.display_name,
+    'total_active_seconds', v_row.total_active_seconds
+  );
+end;
+$$;
+
+revoke all on function public.parkview_heartbeat(text, text, text, text, text) from public;
+grant execute on function public.parkview_heartbeat(text, text, text, text, text) to anon, authenticated;
+
+
+-- =====================================================================
+-- Owner tools: change a user's role from the dashboard
+-- =====================================================================
+create or replace function public.parkview_set_user_role(p_user_id uuid, p_role text)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not public.parkview_is_owner() then
+    raise exception 'Only workspace owners can change roles';
+  end if;
+  if p_role not in ('viewer', 'editor', 'owner') then
+    raise exception 'Unknown role %', p_role;
+  end if;
+  if p_user_id = auth.uid() and p_role <> 'owner' then
+    raise exception 'You cannot remove your own owner role';
+  end if;
+
+  update auth.users
+  set raw_app_meta_data = case
+        when p_role = 'viewer' then coalesce(raw_app_meta_data, '{}'::jsonb) - 'parkview_role'
+        else coalesce(raw_app_meta_data, '{}'::jsonb) || jsonb_build_object('parkview_role', p_role)
+      end
+  where id = p_user_id;
+  if not found then
+    raise exception 'User not found';
+  end if;
+
+  update public.parkview_users set role = p_role where user_id = p_user_id::text;
+end;
+$$;
+
+revoke all on function public.parkview_set_user_role(uuid, text) from public;
+grant execute on function public.parkview_set_user_role(uuid, text) to authenticated;
+
+
+-- =====================================================================
+-- Activity log: who added / moved / edited / deleted what, and when
+-- =====================================================================
+create table if not exists public.parkview_activity (
+  id bigserial primary key,
+  site_id text not null,
+  created_at timestamptz not null default now(),
+  user_id text not null,
+  user_name text not null,
+  action text not null,
+  project_id text,
+  project_name text,
+  layout_id text,
+  layout_name text,
+  marker_id text,
+  device_id text,
+  summary text not null
+);
+create index if not exists parkview_activity_site_time on public.parkview_activity (site_id, created_at desc);
+
+-- The database fills in who did it and when; the browser cannot fake it.
+create or replace function public.parkview_activity_stamp()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  new.user_id := coalesce(auth.uid()::text, '');
+  new.user_name := coalesce(nullif(split_part(coalesce(auth.jwt() ->> 'email', ''), '@', 1), ''), 'User');
+  new.created_at := now();
+  new.summary := left(new.summary, 300);
+  return new;
+end;
+$$;
+
+drop trigger if exists parkview_activity_stamp on public.parkview_activity;
+create trigger parkview_activity_stamp before insert on public.parkview_activity
+  for each row execute function public.parkview_activity_stamp();
+
+alter table public.parkview_activity enable row level security;
+revoke all on table public.parkview_activity from anon, authenticated;
+grant select, insert on table public.parkview_activity to authenticated;
+grant usage, select on sequence public.parkview_activity_id_seq to authenticated;
+
+drop policy if exists "Parkview activity: signed-in users can read" on public.parkview_activity;
+create policy "Parkview activity: signed-in users can read"
+  on public.parkview_activity for select to authenticated using (true);
+drop policy if exists "Parkview activity: editors can record" on public.parkview_activity;
+create policy "Parkview activity: editors can record"
+  on public.parkview_activity for insert to authenticated with check (public.parkview_can_edit());
 
 notify pgrst, 'reload schema';

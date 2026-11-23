@@ -29,11 +29,6 @@
       const accountDescription = document.getElementById('accountDescription');
       const accountSignIn = document.getElementById('accountSignIn');
       const accountSignOut = document.getElementById('accountSignOut');
-      const liveUsers = document.getElementById('liveUsers');
-      const liveUsersButton = document.getElementById('liveUsersButton');
-      const liveUsersPopover = document.getElementById('liveUsersPopover');
-      const liveUserCount = document.getElementById('liveUserCount');
-      const liveUsersList = document.getElementById('liveUsersList');
       const loginForm = document.getElementById('loginForm');
       const loginUsername = document.getElementById('loginUsername');
       const loginPassword = document.getElementById('loginPassword');
@@ -122,9 +117,7 @@
       let presenceDisplayName = null;
       let presenceRole = null;
       let presenceHeartbeatTimer = null;
-      let liveUsersRefreshTimer = null;
       let guestId = null;
-      let guestCounterKey = `mquest-parkview-guest-counter:${markerCloudSiteId}`;
       let draftMarkerPoint = null;
       let editingMarkerId = null;
       let markerPanelPoint = null;
@@ -150,6 +143,8 @@
       let markerSaveInProgress = false;
       let markerCloudDirty = false;
       let markerSyncErrorAnnounced = false;
+      let lastCloudSyncAt = 0;
+      let lastCloudSyncFailed = false;
       let pendingMarkerPhotos = [];
       let removedMarkerPhotoIds = new Set();
       let photoLoadToken = 0;
@@ -315,10 +310,10 @@
             : isSignedIn ? 'View-only account' : 'Guest access to the project workspace';
         accountSignIn.hidden = isSignedIn;
         accountSignOut.hidden = !isSignedIn;
-        liveUsers.hidden = !isWorkspaceOwner();
         accountButton.setAttribute('aria-label', isSignedIn
           ? `Open account menu for ${displayName}`
           : 'Open guest account menu');
+        if (panelRoleHook) panelRoleHook();
       };
 
       const setLoginFeedback = (message) => {
@@ -347,44 +342,31 @@
         accountButton.focus();
       };
 
-      const presenceRestUrl = () =>
-        `${getMarkerCloudRestUrl()}/parkview_presence`;
-
-      const presenceStaleMs = 30000;
-      const presenceHeartbeatMs = 10000;
-      const presenceFetchMs = 5000;
-
+      // ---- Presence & usage tracking ------------------------------------------
+      // Every open, visible tab sends a heartbeat. The database adds up active
+      // time per user / guest (see parkview_heartbeat in supabase.sql).
+      const presenceRestUrl = () => `${getMarkerCloudRestUrl()}/parkview_presence`;
+      const usersRestUrl = () => `${getMarkerCloudRestUrl()}/parkview_users`;
+      const presenceStaleMs = 45000;
+      const presenceHeartbeatMs = 15000;
+      const presenceFetchMs = 10000;
       const guestIdKey = `mquest-parkview-guest-id:${markerCloudSiteId}`;
+      let presenceFetchTimer = null;
+      let heartbeatWarned = false;
 
-      const ensureGuestId = async () => {
+      const randomId = () => (window.crypto && typeof crypto.randomUUID === 'function')
+        ? crypto.randomUUID()
+        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+
+      // A private random ID per browser; the database numbers guests (Guest #1, #2 …).
+      const ensureGuestId = () => {
         if (guestId) return guestId;
-        guestId = localStorage.getItem(guestIdKey);
-        if (guestId) return guestId;
-
-        // Assign a private per-browser anonymous ID with a sequential guest number.
-        // A fresh guest gets a random ID prefix; the sequential number is persisted
-        // in Supabase so it survives browser data clearing and stays unique per user.
-        let guestNum = 1;
-        try {
-          const stored = localStorage.getItem(guestCounterKey);
-          guestNum = stored ? parseInt(stored, 10) + 1 : 1;
-          localStorage.setItem(guestCounterKey, String(guestNum));
-        } catch (e) {
-          console.warn('Unable to read/write guest counter:', e);
+        try { guestId = localStorage.getItem(guestIdKey); } catch (error) { guestId = null; }
+        if (!guestId || !/^guest-[A-Za-z0-9-]{8,64}$/.test(guestId)) {
+          guestId = `guest-${randomId()}`;
+          try { localStorage.setItem(guestIdKey, guestId); } catch (error) { /* private mode */ }
         }
-        guestId = `guest-${guestNum}-${crypto.randomUUID().slice(0, 6)}`;
-        try {
-          localStorage.setItem(guestIdKey, guestId);
-        } catch (e) {
-          console.warn('Unable to save guest ID:', e);
-        }
-
         return guestId;
-      };
-
-      const guestNumberFromId = (id) => {
-        const match = String(id).match(/guest-(\d+)/);
-        return match ? parseInt(match[1], 10) : null;
       };
 
       const nameColorHash = (str) => {
@@ -393,235 +375,104 @@
           hash = ((hash << 5) - hash) + str.charCodeAt(i);
           hash |= 0;
         }
-        const h = Math.abs(hash) % 360;
-        return `hsl(${h}, 70%, 55%)`;
+        // Stay within the blue family (red is reserved for alerts).
+        return `hsl(${195 + (Math.abs(hash) % 40)}, 72%, ${38 + (Math.abs(hash >> 4) % 16)}%)`;
       };
 
-      const upsertPresence = async (userId, displayName, role, projectId, projectName, layoutId, layoutName) => {
-        const payload = {
-          user_id: userId,
-          display_name: displayName,
-          role: role,
-          project_id: projectId,
-          project_name: projectName,
-          layout_id: layoutId,
-          layout_name: layoutName,
-          updated_at: new Date().toISOString(),
-        };
+      const currentLocation = () => {
+        const project = activeProject || { id: defaultProjectId, name: 'Park View Label' };
+        const layout = layouts[selectedIndex] || { id: 'none', name: 'No layout' };
+        return { project, layout };
+      };
+
+      const sendHeartbeat = async () => {
+        if (document.hidden) return;
+        const { project, layout } = currentLocation();
         try {
-          // Try update first with return=representation to check if any row was affected
-          const updateResponse = await supabaseFetch(
-            `${presenceRestUrl()}?user_id=eq.${encodeURIComponent(userId)}`,
-            {
-              method: 'PATCH',
-              headers: {
-                apikey: markerCloudConfig.anonKey,
-                'Content-Type': 'application/json',
-                Prefer: 'return=representation',
-              },
-              body: JSON.stringify(payload),
-            }
-          );
-          const updateData = await updateResponse.json().catch(() => []);
-          if (Array.isArray(updateData) && updateData.length > 0) {
-            return;
-          }
-          // If update affected no rows (user doesn't exist yet), insert
-          const insertResponse = await supabaseFetch(presenceRestUrl(), {
+          const response = await supabaseFetch(`${getMarkerCloudRestUrl()}/rpc/parkview_heartbeat`, {
             method: 'POST',
-            headers: {
-              apikey: markerCloudConfig.anonKey,
-              'Content-Type': 'application/json',
-              Prefer: 'return=minimal',
-            },
-            body: JSON.stringify(payload),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              p_client_id: authSession ? null : ensureGuestId(),
+              p_project_id: project.id,
+              p_project_name: project.name,
+              p_layout_id: layout.id,
+              p_layout_name: layout.name
+            })
           });
-          if (!insertResponse.ok) {
-            console.error('[Presence] Insert failed:', insertResponse.status, await insertResponse.text().catch(() => ''));
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const result = await response.json();
+          if (result && typeof result.user_id === 'string') {
+            presenceUserId = result.user_id;
+            presenceDisplayName = result.display_name;
           }
         } catch (error) {
-          console.error('Unable to upsert presence:', error);
+          if (!heartbeatWarned) {
+            console.warn('Online status is not being recorded. Run the latest supabase.sql.', error.message);
+            heartbeatWarned = true;
+          }
         }
       };
 
-      const deletePresence = async (userId) => {
-        try {
-          await supabaseFetch(`${presenceRestUrl()}?user_id=eq.${encodeURIComponent(userId)}`, {
-            method: 'DELETE',
-            headers: { apikey: markerCloudConfig.anonKey },
-          });
-        } catch (error) {
-          console.error('Unable to delete presence:', error);
-        }
-      };
+      const deletePresence = (userId) => supabaseFetch(
+        `${presenceRestUrl()}?user_id=eq.${encodeURIComponent(userId)}`,
+        { method: 'DELETE' }
+      ).catch((error) => console.error('Unable to clear online status:', error));
 
       const fetchPresence = async () => {
         try {
           const cutoff = new Date(Date.now() - presenceStaleMs).toISOString();
-          const projectId = activeProject?.id || defaultProjectId;
-          const layoutId = layouts[selectedIndex]?.id || 'layout-1';
           const response = await supabaseFetch(
-            `${presenceRestUrl()}?project_id=eq.${encodeURIComponent(projectId)}&layout_id=eq.${encodeURIComponent(layoutId)}&updated_at=gt.${encodeURIComponent(cutoff)}&order=updated_at.desc`,
-            { headers: { apikey: markerCloudConfig.anonKey } }
+            `${presenceRestUrl()}?updated_at=gt.${encodeURIComponent(cutoff)}&order=updated_at.desc`
           );
-          if (!response.ok) {
-            console.error('Presence fetch failed:', response.status, await response.text().catch(() => ''));
-            return [];
-          }
-          const rows = await response.json();
-          const data = Array.isArray(rows) ? rows : [];
-          return data;
-        } catch (error) {
-          console.error('Unable to fetch presence:', error);
-          return [];
-        }
-      };
-
-      const usersRestUrl = () =>
-        `${getMarkerCloudRestUrl()}/parkview_users`;
-
-      const upsertUser = async (userId, email, displayName, role) => {
-        const payload = {
-          user_id: userId,
-          email: email,
-          display_name: displayName,
-          role: role,
-          last_seen_at: new Date().toISOString(),
-        };
-        try {
-          const updateResponse = await supabaseFetch(
-            `${usersRestUrl()}?user_id=eq.${encodeURIComponent(userId)}`,
-            {
-              method: 'PATCH',
-              headers: {
-                apikey: markerCloudConfig.anonKey,
-                'Content-Type': 'application/json',
-                Prefer: 'return=representation',
-              },
-              body: JSON.stringify(payload),
-            }
-          );
-          const updateData = await updateResponse.json().catch(() => []);
-          if (Array.isArray(updateData) && updateData.length > 0) return;
-          const insertResponse = await supabaseFetch(usersRestUrl(), {
-            method: 'POST',
-            headers: {
-              apikey: markerCloudConfig.anonKey,
-              'Content-Type': 'application/json',
-              Prefer: 'return=minimal',
-            },
-            body: JSON.stringify(payload),
-          });
-          if (!insertResponse.ok) {
-            console.error('[Users] Insert failed:', insertResponse.status, await insertResponse.text().catch(() => ''));
-          }
-        } catch (error) {
-          console.error('Unable to upsert user:', error);
-        }
-      };
-
-      const fetchAllUsers = async () => {
-        try {
-          const response = await supabaseFetch(usersRestUrl(), {
-            headers: { apikey: markerCloudConfig.anonKey },
-          });
           if (!response.ok) return [];
           const rows = await response.json();
           return Array.isArray(rows) ? rows : [];
         } catch (error) {
-          console.error('Unable to fetch all users:', error);
           return [];
         }
       };
 
-      const startPresence = async () => {
-        stopPresenceTimers();
-
-        const isSignedIn = Boolean(authSession);
-        presenceUserId = isSignedIn
-          ? (authSession.user.id || 'user-unknown')
-          : await ensureGuestId();
-        presenceDisplayName = isSignedIn
-          ? (displayNameFromEmail(authSession.user.email) || 'User')
-          : `Anonymous ${guestNumberFromId(presenceUserId) || 1}`;
-        presenceRole = isSignedIn ? authSession.user.role : 'guest';
-
-        const active = activeProject || { id: defaultProjectId, name: 'Park View Label' };
-        const current = layouts[selectedIndex] || { id: 'layout-1', name: 'Layout 1' };
-
-        await upsertPresence(
-          presenceUserId,
-          presenceDisplayName,
-          presenceRole,
-          active.id,
-          active.name,
-          current.id,
-          current.name
-        );
-
-        await upsertUser(
-          presenceUserId,
-          isSignedIn ? authSession.user.email : null,
-          presenceDisplayName,
-          presenceRole
-        );
-
-        presenceHeartbeatTimer = setInterval(() => {
-          upsertPresence(
-            presenceUserId,
-            presenceDisplayName,
-            presenceRole,
-            active.id,
-            active.name,
-            current.id,
-            current.name
-          );
-        }, presenceHeartbeatMs);
-
-        liveUsersRefreshTimer = setInterval(() => {
-          refreshPresenceUI();
-        }, presenceFetchMs);
-
-        await refreshPresenceUI();
+      const fetchAllUsers = async () => {
+        const response = await supabaseFetch(`${usersRestUrl()}?order=last_seen_at.desc`);
+        if (!response.ok) throw new Error(`Could not load users (${response.status}). Run the latest supabase.sql.`);
+        const rows = await response.json();
+        return Array.isArray(rows) ? rows : [];
       };
 
       const stopPresenceTimers = () => {
-        if (presenceHeartbeatTimer) {
-          clearInterval(presenceHeartbeatTimer);
-          presenceHeartbeatTimer = null;
-        }
-        if (liveUsersRefreshTimer) {
-          clearInterval(liveUsersRefreshTimer);
-          liveUsersRefreshTimer = null;
-        }
+        clearInterval(presenceHeartbeatTimer);
+        clearInterval(presenceFetchTimer);
+        presenceHeartbeatTimer = null;
+        presenceFetchTimer = null;
       };
 
-      const stopPresence = async () => {
+      const startPresence = () => {
         stopPresenceTimers();
-        if (presenceUserId) {
-          await deletePresence(presenceUserId);
-          presenceUserId = null;
-          presenceDisplayName = null;
-          presenceRole = null;
-        }
-        await refreshPresenceUI();
+        presenceUserId = authSession ? authSession.user.id : ensureGuestId();
+        presenceRole = authSession ? authSession.user.role : 'guest';
+        sendHeartbeat().then(refreshPresenceUI);
+        presenceHeartbeatTimer = setInterval(sendHeartbeat, presenceHeartbeatMs);
+        presenceFetchTimer = setInterval(refreshPresenceUI, presenceFetchMs);
       };
 
-      const updatePresenceLocation = async () => {
-        if (!presenceUserId) return;
-        const active = activeProject || { id: defaultProjectId, name: 'Park View Label' };
-        const current = layouts[selectedIndex] || { id: 'layout-1', name: 'Layout 1' };
-        await upsertPresence(
-          presenceUserId,
-          presenceDisplayName,
-          presenceRole,
-          active.id,
-          active.name,
-          current.id,
-          current.name
-        );
-        await refreshPresenceUI();
+      // Remove this browser's online row (sent while the current token is still attached).
+      const stopPresence = () => {
+        stopPresenceTimers();
+        if (presenceUserId) deletePresence(presenceUserId);
+        presenceUserId = null;
+        presenceDisplayName = null;
+        presenceRole = null;
       };
+
+      const updatePresenceLocation = () => {
+        if (!presenceUserId) return;
+        sendHeartbeat().then(refreshPresenceUI);
+      };
+
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && presenceUserId) sendHeartbeat();
+      });
 
       const escapeHtml = (text) => {
         const div = document.createElement('div');
@@ -629,197 +480,65 @@
         return div.innerHTML;
       };
 
-      const renderPresenceUserItem = (user, isCurrentUser, isOnline) => {
-        const color = nameColorHash(user.display_name || user.user_id);
-        const roleLabel = user.role === 'owner' ? 'Owner' : user.role === 'editor' ? 'Editor' : 'Viewer';
-        const currentBadge = isCurrentUser ? ' <span class="presence-you">(you)</span>' : '';
-        const statusDot = isOnline
-          ? '<span class="status-indicator online"></span>'
-          : '<span class="status-indicator offline"></span>';
-        const location = isOnline
-          ? `${escapeHtml(user.project_name || 'Project')} · ${escapeHtml(user.layout_name || 'Layout')}`
-          : 'Offline';
-        const locationClass = isOnline ? 'live-user-location' : 'live-user-location offline';
-        return `
-          <li class="live-user-item${isCurrentUser ? ' current-user' : ''}${!isOnline ? ' offline-user' : ''}" style="--user-color: ${color}">
-            <div class="live-user-avatar" style="background: ${color}" aria-hidden="true">
-              ${escapeHtml((user.display_name || 'U').charAt(0).toUpperCase())}
-            </div>
-            <div class="live-user-info">
-              <div class="live-user-name">${statusDot} ${escapeHtml(user.display_name || 'User')}${currentBadge}</div>
-              <div class="${locationClass}">${location}</div>
-              <div class="live-user-role">${escapeHtml(roleLabel)}</div>
-            </div>
-          </li>
-        `;
-      };
-
-      const renderPresenceGuestItem = (user) => {
-        const color = nameColorHash(user.user_id);
-        return `
-          <li class="live-user-item guest-user" style="--user-color: ${color}">
-            <div class="live-user-avatar" style="background: ${color}" aria-hidden="true">
-              ${escapeHtml((user.display_name || 'A').charAt(0).toUpperCase())}
-            </div>
-            <div class="live-user-info">
-              <div class="live-user-name">${escapeHtml(user.display_name || 'Anonymous')}</div>
-              <div class="live-user-location">${escapeHtml(user.project_name || 'Project')} · ${escapeHtml(user.layout_name || 'Layout')}</div>
-              <div class="live-user-role">Guest</div>
-            </div>
-          </li>
-        `;
-      };
-
+      let latestPresenceRows = [];
+      let onPresenceUpdated = null; // set by the Users panel
+      let panelDataHook = null; // set by the sidebar panels
+      let panelRoleHook = null;
       const refreshPresenceUI = async () => {
-        const presenceRows = await fetchPresence();
-        const allUsers = await fetchAllUsers();
-        const currentUserId = presenceUserId;
-
-        // Build a map of online users by user_id
-        const onlineById = new Map();
-        presenceRows.forEach((r) => {
-          onlineById.set(r.user_id, r);
-        });
-
-        // Merge: show all registered users, mark online ones
-        // Signed-in users + guests are all tracked, but presence rows only include
-        // users that are currently "present" in this project/layout.
-        const allKnownUsers = allUsers.filter((u) => u.role !== 'guest');
-        const signedInUsers = allUsers.filter((u) => u.role !== 'guest');
-        const guestCount = presenceRows.filter((r) => r.role === 'guest').length;
-
-        // Total online (signed-in + guests)
-        const totalOnline = presenceRows.length;
-        liveUserCount.textContent = totalOnline;
-        liveUsersButton.setAttribute('aria-label', `${totalOnline} user${totalOnline !== 1 ? 's' : ''} online`);
-
-        const list = liveUsersList;
-        list.replaceChildren();
-        if (signedInUsers.length === 0) {
-          const empty = document.createElement('li');
-          empty.className = 'live-users-empty';
-          empty.textContent = 'No registered users.';
-          list.appendChild(empty);
-        } else {
-          // Online users first, then offline
-          const sorted = [...signedInUsers].sort((a, b) => {
-            const aOnline = onlineById.has(a.user_id);
-            const bOnline = onlineById.has(b.user_id);
-            if (aOnline && !bOnline) return -1;
-            if (!aOnline && bOnline) return 1;
-            return 0;
-          });
-          sorted.forEach((user) => {
-            const isOnline = onlineById.has(user.user_id);
-            const presence = isOnline ? onlineById.get(user.user_id) : null;
-            const li = document.createElement('li');
-            li.innerHTML = renderPresenceUserItem({
-              ...user,
-              project_name: presence ? presence.project_name : user.project_name || 'Project',
-              layout_name: presence ? presence.layout_name : user.layout_name || 'Layout',
-            }, user.user_id === currentUserId, isOnline);
-            list.appendChild(li);
-          });
-        }
-
-        // Guests section (online guests only, from presence)
-        const guestSection = document.getElementById('liveUsersGuests');
-        const guestList = document.getElementById('liveUsersGuestList');
-        const guestHeading = guestSection.querySelector('.live-users-guest-heading');
-        guestHeading.textContent = `Guests (${guestCount})`;
-        guestList.replaceChildren();
-        if (guestCount === 0) {
-          const empty = document.createElement('li');
-          empty.className = 'live-users-empty';
-          empty.textContent = 'No guests online.';
-          guestList.appendChild(empty);
-        } else {
-          presenceRows.filter((r) => r.role === 'guest').forEach((user) => {
-            const li = document.createElement('li');
-            li.innerHTML = renderPresenceGuestItem(user);
-            guestList.appendChild(li);
-          });
-        }
-
-        guestSection.hidden = guestCount === 0;
-
-        const liveUsersBlock = document.getElementById('liveUsers');
-        if (totalOnline === 0 && signedInUsers.length === 0) {
-          liveUsersBlock.hidden = true;
-        } else {
-          liveUsersBlock.hidden = false;
-        }
-
-        renderPresenceAvatars(presenceRows);
+        latestPresenceRows = await fetchPresence();
+        renderPresenceAvatars(latestPresenceRows);
+        if (onPresenceUpdated) onPresenceUpdated(latestPresenceRows);
       };
 
+      // Small avatars on the plan and in the layout list showing who else is here.
       const renderPresenceAvatars = (rows) => {
         const layer = document.getElementById('presenceLayer');
         layer.replaceChildren();
-
         const currentLayout = layouts[selectedIndex];
-        const currentProject = activeProject;
-
-        if (!currentLayout || !currentProject) {
+        if (!currentLayout || !activeProject) {
           layer.setAttribute('aria-hidden', 'true');
           return;
         }
-
-        const here = rows.filter((r) =>
-          r.project_id === currentProject.id && r.layout_id === currentLayout.id && r.user_id !== presenceUserId
-        );
-
-        if (here.length > 0) {
-          layer.removeAttribute('aria-hidden');
-        } else {
-          layer.setAttribute('aria-hidden', 'true');
-        }
-
-        here.forEach((user, index) => {
-          const color = nameColorHash(user.display_name || user.user_id);
+        const here = rows.filter((row) => row.project_id === activeProject.id &&
+          row.layout_id === currentLayout.id && row.user_id !== presenceUserId);
+        if (here.length) layer.removeAttribute('aria-hidden');
+        else layer.setAttribute('aria-hidden', 'true');
+        here.slice(0, 6).forEach((user) => {
           const avatar = document.createElement('div');
           avatar.className = 'presence-avatar';
-          avatar.style.left = `calc(10% + ${index * 34}px)`;
-          avatar.style.top = '12px';
+          avatar.style.background = nameColorHash(user.display_name || user.user_id);
           avatar.title = `${user.display_name} is viewing this layout`;
-          avatar.innerHTML = (user.display_name || 'U').charAt(0).toUpperCase();
+          avatar.textContent = (user.display_name || 'U').replace(/^Guest #/, 'G').charAt(0).toUpperCase();
           layer.appendChild(avatar);
         });
 
-        document.querySelectorAll('.layout-item').forEach((item, index) => {
-          const oldAvatar = item.querySelector('.layout-presence-avatars');
-          if (oldAvatar) oldAvatar.remove();
-
-          const layout = layouts[index];
-          const usersHere = rows.filter((r) =>
-            r.project_id === currentProject.id && r.layout_id === layout.id
-          );
-
-          if (usersHere.length > 0) {
-            const avatarWrap = document.createElement('div');
-            avatarWrap.className = 'layout-presence-avatars';
-            usersHere.slice(0, 3).forEach((user) => {
-              const color = nameColorHash(user.display_name || user.user_id);
-              const av = document.createElement('div');
-              av.className = 'layout-presence-avatar';
-              av.style.background = color;
-              av.title = `${user.display_name} is here`;
-              av.innerHTML = (user.display_name || 'U').charAt(0).toUpperCase();
-              avatarWrap.appendChild(av);
-            });
-            if (usersHere.length > 3) {
-              const more = document.createElement('div');
-              more.className = 'layout-presence-avatar more';
-              more.textContent = `+${usersHere.length - 3}`;
-              more.style.background = 'var(--muted)';
-              avatarWrap.appendChild(more);
-            }
-            item.appendChild(avatarWrap);
+        document.querySelectorAll('#layoutList .layout-item').forEach((item) => {
+          item.querySelector('.layout-presence-avatars')?.remove();
+          const usersHere = rows.filter((row) => row.project_id === activeProject.id &&
+            row.layout_id === item.dataset.layoutId && row.user_id !== presenceUserId);
+          if (!usersHere.length) return;
+          const wrap = document.createElement('span');
+          wrap.className = 'layout-presence-avatars';
+          usersHere.slice(0, 3).forEach((user) => {
+            const av = document.createElement('span');
+            av.className = 'layout-presence-avatar';
+            av.style.background = nameColorHash(user.display_name || user.user_id);
+            av.title = `${user.display_name} is here`;
+            av.textContent = (user.display_name || 'U').replace(/^Guest #/, 'G').charAt(0).toUpperCase();
+            wrap.appendChild(av);
+          });
+          if (usersHere.length > 3) {
+            const more = document.createElement('span');
+            more.className = 'layout-presence-avatar more';
+            more.textContent = `+${usersHere.length - 3}`;
+            wrap.appendChild(more);
           }
+          item.appendChild(wrap);
         });
       };
 
       const setAuthSession = (session) => {
+        if (presenceUserId) stopPresence();
         authSession = session;
         updateAccountMenu();
         startPresence();
@@ -837,11 +556,12 @@
 
       const clearAuthSession = () => {
         const previousSession = authSession;
-        if (previousSession) stopPresence(previousSession);
+        if (previousSession) stopPresence();
         authSession = null;
         clearTimeout(authRefreshTimer);
         authRefreshTimer = null;
         updateAccountMenu();
+        if (!presenceUserId) startPresence();
         try {
           localStorage.removeItem(authSessionStorageKey);
         } catch (error) {
@@ -896,6 +616,7 @@
           const savedValue = localStorage.getItem(authSessionStorageKey);
           if (!savedValue) {
             updateAccountMenu();
+            startPresence();
             return;
           }
           savedSession = JSON.parse(savedValue);
@@ -960,15 +681,6 @@
 
       const updateProjectControls = () => {
         ensureActiveProject();
-        const projectSelect = document.getElementById('projectSelect');
-        projectSelect.replaceChildren();
-        getActiveProjects().forEach((project) => {
-          const option = document.createElement('option');
-          option.value = project.id;
-          option.textContent = project.name;
-          projectSelect.append(option);
-        });
-        projectSelect.value = activeProject.id;
         document.getElementById('pageTitle').textContent = activeProject.name;
         document.title = `${activeProject.name} | MQuest`;
         const renameButton = document.getElementById('projectRename');
@@ -981,10 +693,44 @@
         deleteButton.title = cannotDeleteLastProject
           ? 'At least one project must remain'
           : `Delete ${activeProject.name}`;
-        document.querySelector('.sidebar-bottom .project-name').textContent = activeProject.name;
-        document.querySelector('.sidebar-bottom .project-location').textContent =
-          `${layouts.length} ${layouts.length === 1 ? 'layout' : 'layouts'} · Project workspace`;
-        document.getElementById('sidebarProjectName').textContent = activeProject.name;
+        renderProjectList();
+      };
+
+      // Sidebar → Projects
+      const renderProjectList = () => {
+        const projectList = document.getElementById('projectList');
+        projectList.replaceChildren();
+        getActiveProjects().forEach((project) => {
+          const isActive = project === activeProject;
+          const li = document.createElement('li');
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = `sidebar-item${isActive ? ' active' : ''}`;
+          button.setAttribute('aria-current', isActive ? 'true' : 'false');
+          button.title = project.name;
+          const dot = document.createElement('span');
+          dot.className = 'sidebar-item-dot';
+          dot.setAttribute('aria-hidden', 'true');
+          dot.textContent = project.name.trim().charAt(0).toUpperCase() || 'P';
+          const copy = document.createElement('span');
+          copy.className = 'sidebar-item-copy nav-label';
+          const name = document.createElement('span');
+          name.className = 'sidebar-item-title';
+          name.textContent = project.name;
+          const meta = document.createElement('span');
+          meta.className = 'sidebar-item-meta';
+          const layoutTotal = project.layouts.length;
+          const deviceTotal = project.layouts.reduce((sum, layout) => sum + (markersByLayout.get(layout.id) || []).length, 0);
+          meta.textContent = `${layoutTotal} ${layoutTotal === 1 ? 'layout' : 'layouts'} · ${deviceTotal} ${deviceTotal === 1 ? 'device' : 'devices'}`;
+          copy.append(name, meta);
+          button.append(dot, copy);
+          button.addEventListener('click', () => {
+            selectProject(project.id);
+            if (sidebarIsDrawer()) setSidebarOpen(false);
+          });
+          li.append(button);
+          projectList.append(li);
+        });
       };
 
       const selectProject = (projectId) => {
@@ -1390,8 +1136,11 @@
         try {
           await syncMarkersFromCloud();
           markerSyncErrorAnnounced = false;
+          lastCloudSyncAt = Date.now();
+          lastCloudSyncFailed = false;
         } catch (error) {
           console.error('Unable to sync shared markers:', error);
+          lastCloudSyncFailed = true;
           if (!markerCloudInitialized && !markerSyncErrorAnnounced) {
             announce('Could not sync shared markers. Showing markers saved on this device.', true);
             markerSyncErrorAnnounced = true;
@@ -1414,6 +1163,34 @@
           width,
           height
         };
+      };
+
+      // Records a change in the shared activity log (editors / owners only).
+      const logActivity = (action, summary, { project = activeProject, layout = null, marker = null } = {}) => {
+        if (!isWorkspaceEditor()) return;
+        supabaseFetch(`${getMarkerCloudRestUrl()}/parkview_activity`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+          body: JSON.stringify({
+            site_id: markerCloudSiteId,
+            user_id: '',
+            user_name: '',
+            action,
+            project_id: project ? project.id : null,
+            project_name: project ? project.name : null,
+            layout_id: layout ? layout.id : null,
+            layout_name: layout ? layout.name : null,
+            marker_id: marker ? marker.id : null,
+            device_id: marker && marker.deviceId ? String(marker.deviceId) : null,
+            summary
+          })
+        }).then((response) => {
+          if (!response.ok) console.warn(`Activity was not recorded (${response.status}). Run the latest supabase.sql.`);
+        }).catch((error) => console.warn('Activity was not recorded:', error.message));
+      };
+      const describeDevice = (marker) => {
+        const id = marker && marker.deviceId ? `device ${marker.deviceId}` : 'a device';
+        return marker && marker.product ? `${id} (${marker.product})` : id;
       };
 
       // Expanding ring at a marker's tip — the "ping" when it is tapped.
@@ -1442,6 +1219,7 @@ const renderMarkers = () => {
 
         pin.type = 'button';
         pin.className = 'map-marker';
+        pin.dataset.markerId = marker.id;
 
         // Selected marker when moving
         if (markerMoveMode) {
@@ -1571,6 +1349,7 @@ const renderMarkers = () => {
         markerLayer.append(pin);
 
     });
+    if (panelDataHook) panelDataHook();
 };
 
       const setMarkerMode = (enabled) => {
@@ -1825,9 +1604,9 @@ const renderMarkers = () => {
         [
           ['Device ID', marker.deviceId],
           ['Device Name', marker.product],
-          ['Device Type', marker.deviceType],
           ['Floor Level', marker.floorLevel],
           ['Venue', marker.location],
+          ['Device Type', marker.deviceType],
           ['Next Inspection Date', formatMonthYear(marker.serviceDate)],
           ['Manufacturing Date', formatMonthYear(marker.manufacturingDate)]
         ].forEach(([label, value], index) => {
@@ -1892,6 +1671,8 @@ const renderMarkers = () => {
           row.className = 'layout-row';
           const item = document.createElement('button');
           item.type = 'button';
+          item.dataset.layoutId = layout.id;
+          item.title = layout.name;
           item.className = `layout-item${index === selectedIndex ? ' active' : ''}`;
           item.setAttribute('aria-current', index === selectedIndex ? 'true' : 'false');
           item.setAttribute('aria-label', `Show ${layout.name}`);
@@ -1900,27 +1681,32 @@ const renderMarkers = () => {
           thumb.className = 'layout-thumb';
           thumb.src = layout.src;
           thumb.alt = '';
+          thumb.loading = 'lazy';
 
           const copy = document.createElement('span');
-          copy.className = 'layout-item-copy';
+          copy.className = 'layout-item-copy nav-label';
           const title = document.createElement('span');
           title.className = 'layout-item-title';
           title.textContent = layout.name;
           const meta = document.createElement('span');
           meta.className = 'layout-item-meta';
-          meta.textContent = layout.uploaded ? 'Added image' : 'Project drawing';
+          const deviceTotal = (markersByLayout.get(layout.id) || []).length;
+          meta.textContent = `${deviceTotal} ${deviceTotal === 1 ? 'device' : 'devices'}`;
           copy.append(title, meta);
           item.append(thumb, copy);
-          item.addEventListener('click', () => selectLayout(index));
+          item.addEventListener('click', () => {
+            selectLayout(index);
+            if (sidebarIsDrawer()) setSidebarOpen(false);
+          });
 
           const actions = document.createElement('div');
-          actions.className = 'layout-item-actions';
+          actions.className = 'layout-item-actions editor-only';
           const rename = document.createElement('button');
           rename.type = 'button';
           rename.className = 'layout-action rename';
           rename.setAttribute('aria-label', `Rename ${layout.name}`);
           rename.title = 'Rename layout';
-          rename.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg><span>Rename</span>';
+          rename.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>';
           rename.addEventListener('click', () => {
             projectToRename = null;
             document.getElementById('layoutRenameTitle').textContent = 'Rename layout';
@@ -1951,8 +1737,34 @@ const renderMarkers = () => {
           list.append(row);
         });
 
-        document.getElementById('layoutCount').textContent =
-          `${String(layouts.length).padStart(2, '0')} ${layouts.length === 1 ? 'sheet' : 'sheets'}`;
+        document.getElementById('layoutCount').textContent = String(layouts.length);
+
+        // Phones: swipeable strip of layouts under the plan
+        const strip = document.getElementById('layoutStrip');
+        strip.replaceChildren();
+        layouts.forEach((layout, index) => {
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = `layout-chip${index === selectedIndex ? ' active' : ''}`;
+          chip.setAttribute('aria-current', index === selectedIndex ? 'true' : 'false');
+          const chipThumb = document.createElement('img');
+          chipThumb.src = layout.src;
+          chipThumb.alt = '';
+          chipThumb.loading = 'lazy';
+          const chipName = document.createElement('span');
+          chipName.textContent = layout.name;
+          const chipMeta = document.createElement('small');
+          const total = (markersByLayout.get(layout.id) || []).length;
+          chipMeta.textContent = `${total} ${total === 1 ? 'device' : 'devices'}`;
+          chip.append(chipThumb, chipName, chipMeta);
+          chip.addEventListener('click', () => selectLayout(index));
+          strip.append(chip);
+        });
+        const activeChip = strip.querySelector('.layout-chip.active');
+        if (activeChip && strip.clientWidth) {
+          strip.scrollTo({ left: activeChip.offsetLeft - (strip.clientWidth - activeChip.offsetWidth) / 2, behavior: 'smooth' });
+        }
+        renderPresenceAvatars(latestPresenceRows);
       };
 
       const updateSelectedLayout = () => {
@@ -1964,7 +1776,7 @@ const renderMarkers = () => {
           document.getElementById('sheetTitle').textContent = 'No layouts';
           document.getElementById('sheetType').textContent = 'Add a layout to get started';
           document.getElementById('sheetCounter').textContent = '00 / 00';
-          document.getElementById('imageCaption').textContent = 'No layouts available';
+          document.getElementById('breadcrumbLayout').textContent = 'No layouts';
           document.getElementById('prevLayout').disabled = true;
           document.getElementById('nextLayout').disabled = true;
           markerToggle.disabled = true;
@@ -1983,7 +1795,7 @@ const renderMarkers = () => {
         document.getElementById('sheetType').textContent = layout.uploaded ? 'Added image' : 'Project drawing';
         document.getElementById('sheetCounter').textContent =
           `${String(selectedIndex + 1).padStart(2, '0')} / ${String(layouts.length).padStart(2, '0')}`;
-        document.getElementById('imageCaption').textContent = `${activeProject.name} · ${layout.name}`;
+        document.getElementById('breadcrumbLayout').textContent = layout.name;
         document.getElementById('prevLayout').disabled = selectedIndex === 0;
         document.getElementById('nextLayout').disabled = selectedIndex === layouts.length - 1;
         renderList();
@@ -2527,15 +2339,16 @@ const renderMarkers = () => {
           announce(`${imageFiles.length} ${imageFiles.length === 1 ? 'layout' : 'layouts'} added; ${rejectedCount} non-image ${rejectedCount === 1 ? 'file was' : 'files were'} skipped.`, true);
         } else if (imageFiles.length) {
           announce(`${imageFiles.length} ${imageFiles.length === 1 ? 'layout' : 'layouts'} added.`);
+        }
+        if (imageFiles.length && !cloudFailureCount) {
+          logActivity('layout.add', `Added ${imageFiles.length === 1 ? `layout "${imageFiles[0].name}"` : `${imageFiles.length} layouts`}`,
+            { layout: imageFiles.length === 1 ? layouts[lastAddedIndex] : null });
         } else if (rejectedCount) {
           announce('Only image files can be added.', true);
         }
         fileInput.value = '';
       });
 
-      document.getElementById('projectSelect').addEventListener('change', (event) => {
-        selectProject(event.target.value);
-      });
 
       const projectCreateDialog = document.getElementById('projectCreateDialog');
       const projectCreateForm = document.getElementById('projectCreateForm');
@@ -2600,6 +2413,7 @@ const renderMarkers = () => {
           announce(`Project created with ${files.length} layout(s), but ${issues.join('; ')}.`, true);
         } else {
           announce(`Project "${project.name}" created with ${files.length} layout(s).`);
+          logActivity('project.create', `Created project "${project.name}" with ${files.length} layout(s)`, { project });
         }
         createButton.disabled = false;
       });
@@ -2641,6 +2455,7 @@ const renderMarkers = () => {
           }
           const saveButton = document.getElementById('layoutRenameSave');
           saveButton.disabled = true;
+          const previousProjectName = project.name;
           project.name = name;
           project.updatedAt = new Date().toISOString();
           layoutRenameDialog.hidden = true;
@@ -2652,6 +2467,7 @@ const renderMarkers = () => {
             projectCloudSyncAvailable = true;
             projectSyncErrorAnnounced = false;
             announce(`Project renamed to "${name}" and synced across devices.`);
+            logActivity('project.rename', `Renamed project "${previousProjectName}" to "${name}"`, { project });
           } catch (error) {
             console.error('Unable to sync project name:', error);
             announce(projectSavedLocally
@@ -2672,6 +2488,7 @@ const renderMarkers = () => {
         saveButton.disabled = true;
         try {
           const updatedLayout = { ...layout, name };
+          const previousLayoutName = layout.name;
           await saveCloudLayoutState(updatedLayout);
           layout.name = updatedLayout.name;
           layout.imagePath = updatedLayout.imagePath;
@@ -2694,6 +2511,7 @@ const renderMarkers = () => {
           announce(localCacheFailed
             ? 'Layout renamed on other devices, but its local saved name could not be updated.'
             : 'Layout renamed on all devices for this site.');
+          logActivity('layout.rename', `Renamed layout "${previousLayoutName}" to "${name}"`, { layout });
         } catch (error) {
           console.error('Unable to rename layout:', error);
           announce(error.message || 'Could not rename the layout.', true);
@@ -2739,6 +2557,7 @@ const renderMarkers = () => {
           deleteButton.disabled = true;
           try {
             await deleteProjectData(project);
+            logActivity('project.delete', `Deleted project "${project.name}"`, { project });
             layoutConfirm.hidden = true;
             projectToDelete = null;
             deleteButton.textContent = 'Delete layout';
@@ -2778,6 +2597,7 @@ const renderMarkers = () => {
           layoutToDelete = null;
           selectLayout(Math.min(selectedIndex, layouts.length - 1));
           announce('Layout deleted from this site on all devices.');
+          logActivity('layout.delete', `Deleted layout "${layout.name}"`, { layout });
         } catch (error) {
           console.error('Unable to delete layout:', error);
           announce(error.message || 'Could not delete the layout.', true);
@@ -2856,6 +2676,7 @@ const renderMarkers = () => {
             announce('Marker moved on this device, but it could not sync to your other devices.', true);
           } else {
             announce('Marker moved and synced across devices.');
+            logActivity('marker.move', `Moved ${describeDevice(marker)}`, { layout: layouts[selectedIndex], marker });
           }
           return;
         }
@@ -2887,6 +2708,7 @@ const renderMarkers = () => {
         event.preventDefault();
         const saveButton = markerEditor.querySelector('.marker-save');
         saveButton.disabled = true;
+        const wasEditing = Boolean(editingMarkerId);
         await markerSyncPromise;
         const markers = getCurrentMarkers();
         const details = {
@@ -2964,6 +2786,12 @@ const renderMarkers = () => {
         } else {
           announce('Marker synced across devices.');
         }
+        if (saveResult.cloudSaved) {
+          const savedMarker = markers.find((item) => item.id === markerId);
+          logActivity(wasEditing ? 'marker.edit' : 'marker.add',
+            `${wasEditing ? 'Edited' : 'Added'} ${describeDevice(savedMarker)}`,
+            { layout: layouts[selectedIndex], marker: savedMarker });
+        }
         saveButton.disabled = false;
       });
 
@@ -3028,6 +2856,7 @@ const renderMarkers = () => {
           announce('Marker removed on this device, but the change could not sync to your other devices.', true);
         } else {
           announce('Marker removed from this layout on all devices.');
+          if (marker) logActivity('marker.delete', `Deleted ${describeDevice(marker)}`, { layout: layouts[selectedIndex], marker });
         }
       });
 
@@ -3138,13 +2967,6 @@ const renderMarkers = () => {
         }
       });
 
-      liveUsersButton.addEventListener('click', () => {
-        const shouldOpen = liveUsersPopover.hidden;
-        closeAccountPopover();
-        liveUsersPopover.hidden = !shouldOpen;
-        liveUsersButton.setAttribute('aria-expanded', String(shouldOpen));
-        if (shouldOpen) refreshPresenceUI();
-      });
 
       // ---- Sign-in screen: modes, password reset, lockout ---------------------
       const loginTitle = document.getElementById('loginTitle');
@@ -3414,10 +3236,6 @@ const renderMarkers = () => {
       });
       document.addEventListener('click', (event) => {
         if (!accountMenu.contains(event.target)) closeAccountPopover();
-        if (!liveUsersButton.contains(event.target) && !liveUsersPopover.contains(event.target)) {
-          liveUsersPopover.hidden = true;
-          liveUsersButton.setAttribute('aria-expanded', 'false');
-        }
       });
 
       document.addEventListener('keydown', (event) => {
@@ -3430,12 +3248,6 @@ const renderMarkers = () => {
           event.preventDefault();
           closeAccountPopover();
           accountButton.focus();
-          return;
-        }
-        if (event.key === 'Escape' && !liveUsersPopover.hidden) {
-          event.preventDefault();
-          liveUsersPopover.hidden = true;
-          liveUsersButton.setAttribute('aria-expanded', 'false');
           return;
         }
         if (!photoViewer.hidden) return;
@@ -3453,6 +3265,926 @@ const renderMarkers = () => {
 
       image.addEventListener('load', renderMarkers);
       new ResizeObserver(renderMarkers).observe(stage);
+      // =====================================================================
+      // Sidebar · tool panels · device search
+      // =====================================================================
+      const appSidebar = document.getElementById('appSidebar');
+      const sidebarBackdrop = document.getElementById('sidebarBackdrop');
+      const sidebarMenuButton = document.getElementById('sidebarMenuButton');
+      const sidebarCollapse = document.getElementById('sidebarCollapse');
+      const sidePanel = document.getElementById('sidePanel');
+      const sidePanelTitle = document.getElementById('sidePanelTitle');
+      const sidePanelEyebrow = document.getElementById('sidePanelEyebrow');
+      const sidePanelBody = document.getElementById('sidePanelBody');
+      const drawerQuery = window.matchMedia('(max-width: 850px)');
+      const sidebarCollapsedKey = 'mquest-parkview-sidebar-collapsed';
+
+      // Small DOM helper: el('div', { className: 'x', text: 'hi' }, child, child)
+      const el = (tag, props = {}, ...children) => {
+        const node = document.createElement(tag);
+        Object.entries(props).forEach(([key, value]) => {
+          if (value === undefined || value === null || value === false) return;
+          if (key === 'text') node.textContent = value;
+          else if (key === 'className') node.className = value;
+          else if (key === 'dataset') Object.assign(node.dataset, value);
+          else if (key.startsWith('on')) node.addEventListener(key.slice(2).toLowerCase(), value);
+          else node.setAttribute(key, value === true ? '' : value);
+        });
+        children.flat().forEach((child) => {
+          if (child !== null && child !== undefined && child !== false) node.append(child);
+        });
+        return node;
+      };
+
+      const formatDuration = (totalSeconds) => {
+        const seconds = Math.max(0, Math.floor(totalSeconds || 0));
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const sec = seconds % 60;
+        if (h) return `${h}h ${String(m).padStart(2, '0')}m ${String(sec).padStart(2, '0')}s`;
+        if (m) return `${m}m ${String(sec).padStart(2, '0')}s`;
+        return `${sec}s`;
+      };
+
+      const formatAgo = (date) => {
+        const seconds = Math.max(0, Math.round((Date.now() - new Date(date).getTime()) / 1000));
+        if (!Number.isFinite(seconds)) return '—';
+        if (seconds < 10) return 'just now';
+        if (seconds < 60) return `${seconds}s ago`;
+        const minutes = Math.round(seconds / 60);
+        if (minutes < 60) return `${minutes} min ago`;
+        const hours = Math.round(minutes / 60);
+        if (hours < 24) return `${hours} h ago`;
+        const days = Math.round(hours / 24);
+        if (days < 30) return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+        return new Date(date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+      };
+
+      const formatDateTime = (date) => new Date(date).toLocaleString('en-GB', {
+        day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+      });
+
+      // ---- Sidebar: mobile drawer + desktop collapse -------------------------
+      const sidebarIsDrawer = () => drawerQuery.matches;
+
+      function setSidebarOpen(open) {
+        document.body.classList.toggle('sidebar-open', open);
+        sidebarBackdrop.hidden = !open;
+        sidebarMenuButton.setAttribute('aria-expanded', String(open));
+        sidebarMenuButton.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+      }
+
+      const setSidebarCollapsed = (collapsed) => {
+        document.body.classList.toggle('sidebar-collapsed', collapsed);
+        sidebarCollapse.setAttribute('aria-pressed', String(collapsed));
+        sidebarCollapse.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+        sidebarCollapse.querySelector('.nav-label').textContent = collapsed ? 'Expand' : 'Collapse';
+        try { localStorage.setItem(sidebarCollapsedKey, collapsed ? '1' : '0'); } catch (error) { /* ignore */ }
+        window.requestAnimationFrame(renderMarkers);
+      };
+
+      try {
+        if (localStorage.getItem(sidebarCollapsedKey) === '1') setSidebarCollapsed(true);
+      } catch (error) { /* ignore */ }
+
+      sidebarMenuButton.addEventListener('click', () => setSidebarOpen(!document.body.classList.contains('sidebar-open')));
+      sidebarBackdrop.addEventListener('click', () => {
+        setSidebarOpen(false);
+        closePanel();
+      });
+      sidebarCollapse.addEventListener('click', () => {
+        if (sidebarIsDrawer()) {
+          setSidebarOpen(false);
+          return;
+        }
+        setSidebarCollapsed(!document.body.classList.contains('sidebar-collapsed'));
+      });
+      drawerQuery.addEventListener('change', () => setSidebarOpen(false));
+      document.getElementById('breadcrumbProjects').addEventListener('click', () => {
+        if (sidebarIsDrawer()) setSidebarOpen(true);
+        else if (document.body.classList.contains('sidebar-collapsed')) setSidebarCollapsed(false);
+        window.requestAnimationFrame(() => document.querySelector('#projectList .sidebar-item')?.focus());
+      });
+
+      // ---- Data helpers -------------------------------------------------------
+      const devicesInProject = (project = activeProject) => project.layouts.flatMap((layout, layoutIndex) =>
+        (markersByLayout.get(layout.id) || []).map((marker) => ({ marker, layout, layoutIndex, project })));
+      const devicesEverywhere = () => getActiveProjects().flatMap((project) => devicesInProject(project));
+
+      const deviceBadge = (marker) => el('span', {
+        className: `device-badge${marker.deviceId ? '' : ' is-empty'}`,
+        text: marker.deviceId ? String(marker.deviceId) : '—'
+      });
+
+      const deviceRow = (entry, { showProject = false, extra = null } = {}) => {
+        const { marker, layout, project } = entry;
+        const meta = [marker.floorLevel, marker.location, marker.deviceType].filter(Boolean).join(' · ') || 'No details yet';
+        return el('li', {},
+          el('button', {
+            type: 'button',
+            className: 'device-row',
+            onclick: () => focusMarker(layout.id, marker.id)
+          },
+          deviceBadge(marker),
+          el('span', { className: 'device-row-copy' },
+            el('strong', { text: marker.product || 'Unnamed device' }),
+            el('small', { text: meta }),
+            el('small', { className: 'device-row-where', text: showProject ? `${project.name} › ${layout.name}` : layout.name })
+          ),
+          extra));
+      };
+
+      const emptyState = (title, copy) => el('div', { className: 'panel-empty' },
+        el('strong', { text: title }), copy ? el('p', { text: copy }) : null);
+
+      // ---- Fly to a device on the plan ---------------------------------------
+      const waitForPlanImage = () => new Promise((resolve) => {
+        if (image.complete && image.naturalWidth) {
+          window.requestAnimationFrame(() => resolve());
+          return;
+        }
+        const done = () => { clearTimeout(timer); resolve(); };
+        const timer = setTimeout(done, 4000);
+        image.addEventListener('load', done, { once: true });
+        image.addEventListener('error', done, { once: true });
+      });
+
+      const focusMarker = async (layoutId, markerId) => {
+        const project = getActiveProjects().find((item) => item.layouts.some((layout) => layout.id === layoutId));
+        if (!project) return;
+        if (project !== activeProject) selectProject(project.id);
+        const index = layouts.findIndex((layout) => layout.id === layoutId);
+        if (index === -1) return;
+        if (index !== selectedIndex) selectLayout(index);
+        else closeMarkerEditor();
+        setMarkerMode(false);
+        setMarkerMoveMode(false);
+        if (sidebarIsDrawer()) {
+          closePanel();
+          setSidebarOpen(false);
+        }
+        await waitForPlanImage();
+        const marker = (markersByLayout.get(layoutId) || []).find((item) => item.id === markerId);
+        const bounds = getImageBounds();
+        if (!marker || !bounds) {
+          announce('That device could not be found on its layout.', true);
+          return;
+        }
+        // Zoom in and place the device left of centre, leaving room for its details.
+        const width = stage.clientWidth;
+        const height = stage.clientHeight;
+        const markerX = bounds.left + marker.x * bounds.width;
+        const markerY = bounds.top + marker.y * bounds.height;
+        const targetX = width > 700 ? width * 0.3 : width / 2;
+        const targetY = width > 700 ? height * 0.42 : height * 0.3;
+        zoom = Math.max(zoom, 2.5);
+        panX = targetX - width / 2 - (markerX - width / 2) * zoom;
+        panY = targetY - height / 2 - (markerY - height / 2) * zoom;
+        stage.classList.add('is-flying');
+        updateTransform();
+        setTimeout(() => stage.classList.remove('is-flying'), 650);
+        setTimeout(() => {
+          const pin = Array.from(markerLayer.querySelectorAll('.map-marker'))
+            .find((item) => item.dataset.markerId === markerId);
+          if (pin) pin.click();
+        }, 560);
+      };
+
+      // ---- Device search (viewer toolbar) ------------------------------------
+      const deviceSearchInput = document.getElementById('deviceSearchInput');
+      const deviceSearchResults = document.getElementById('deviceSearchResults');
+      let deviceSearchMatches = [];
+      let deviceSearchActive = -1;
+
+      const matchDevices = (query) => {
+        const q = query.trim().toLowerCase();
+        if (!q) return [];
+        const scored = devicesEverywhere().map((entry) => {
+          const id = String(entry.marker.deviceId || '').toLowerCase();
+          const name = String(entry.marker.product || '').toLowerCase();
+          let score = -1;
+          if (id === q) score = 0;
+          else if (id.startsWith(q)) score = 1;
+          else if (id.includes(q)) score = 2;
+          else if (name.includes(q)) score = 3;
+          if (score >= 0 && entry.project !== activeProject) score += 10;
+          return { entry, score };
+        }).filter((item) => item.score >= 0);
+        scored.sort((a, b) => a.score - b.score ||
+          String(a.entry.marker.deviceId).localeCompare(String(b.entry.marker.deviceId), undefined, { numeric: true }));
+        return scored.slice(0, 8).map((item) => item.entry);
+      };
+
+      const closeDeviceSearch = () => {
+        deviceSearchResults.hidden = true;
+        deviceSearchInput.setAttribute('aria-expanded', 'false');
+        deviceSearchInput.removeAttribute('aria-activedescendant');
+        deviceSearchActive = -1;
+      };
+
+      const highlightDeviceResult = (index) => {
+        deviceSearchActive = index;
+        deviceSearchResults.querySelectorAll('[role="option"]').forEach((option, i) => {
+          option.setAttribute('aria-selected', String(i === index));
+          if (i === index) {
+            deviceSearchInput.setAttribute('aria-activedescendant', option.id);
+            option.scrollIntoView({ block: 'nearest' });
+          }
+        });
+      };
+
+      const chooseDeviceResult = (entry) => {
+        closeDeviceSearch();
+        deviceSearchInput.value = '';
+        deviceSearchInput.blur();
+        focusMarker(entry.layout.id, entry.marker.id);
+      };
+
+      const renderDeviceSearch = () => {
+        deviceSearchMatches = matchDevices(deviceSearchInput.value);
+        deviceSearchResults.replaceChildren();
+        if (!deviceSearchInput.value.trim()) {
+          closeDeviceSearch();
+          return;
+        }
+        if (!deviceSearchMatches.length) {
+          deviceSearchResults.append(el('li', { className: 'device-search-empty', text: `No device matches "${deviceSearchInput.value.trim()}"` }));
+        }
+        deviceSearchMatches.forEach((entry, index) => {
+          const { marker, layout, project } = entry;
+          deviceSearchResults.append(el('li', {
+            id: `device-option-${index}`,
+            role: 'option',
+            'aria-selected': 'false',
+            className: 'device-search-option',
+            onmousedown: (event) => event.preventDefault(),
+            onclick: () => chooseDeviceResult(entry)
+          },
+          deviceBadge(marker),
+          el('span', { className: 'device-row-copy' },
+            el('strong', { text: marker.product || 'Unnamed device' }),
+            el('small', { text: `${project === activeProject ? '' : `${project.name} › `}${layout.name}${marker.floorLevel ? ` · ${marker.floorLevel}` : ''}` }))));
+        });
+        deviceSearchResults.hidden = false;
+        deviceSearchInput.setAttribute('aria-expanded', 'true');
+        if (deviceSearchMatches.length) highlightDeviceResult(0);
+      };
+
+      deviceSearchInput.addEventListener('input', renderDeviceSearch);
+      deviceSearchInput.addEventListener('focus', () => { if (deviceSearchInput.value.trim()) renderDeviceSearch(); });
+      deviceSearchInput.addEventListener('blur', () => setTimeout(closeDeviceSearch, 120));
+      deviceSearchInput.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowDown' && deviceSearchMatches.length) {
+          event.preventDefault();
+          highlightDeviceResult((deviceSearchActive + 1) % deviceSearchMatches.length);
+        } else if (event.key === 'ArrowUp' && deviceSearchMatches.length) {
+          event.preventDefault();
+          highlightDeviceResult((deviceSearchActive - 1 + deviceSearchMatches.length) % deviceSearchMatches.length);
+        } else if (event.key === 'Enter') {
+          event.preventDefault();
+          const entry = deviceSearchMatches[Math.max(0, deviceSearchActive)];
+          if (entry) chooseDeviceResult(entry);
+        } else if (event.key === 'Escape') {
+          event.stopPropagation();
+          deviceSearchInput.value = '';
+          closeDeviceSearch();
+          deviceSearchInput.blur();
+        }
+      });
+
+      // ---- Tool panels -------------------------------------------------------
+      let currentPanel = null;
+      let panelTimer = null;
+      let panelReturnFocus = null;
+
+      const panelDefinitions = {
+        devices: { title: 'Devices', eyebrow: 'Tools', render: () => renderDevicesPanel() },
+        inspections: { title: 'Inspection schedule', eyebrow: 'Tools', render: () => renderInspectionsPanel() },
+        activity: { title: 'Activity log', eyebrow: 'Tools', render: () => renderActivityPanel() },
+        reports: { title: 'Reports', eyebrow: 'Tools', render: () => renderReportsPanel() },
+        users: { title: 'Users', eyebrow: 'Owner', render: () => renderUsersPanel() },
+        settings: { title: 'Settings & Help', eyebrow: 'Workspace', render: () => renderSettingsPanel() }
+      };
+
+      const setPanelButtons = () => {
+        document.querySelectorAll('[data-panel]').forEach((button) => {
+          const isOpen = button.dataset.panel === currentPanel;
+          button.classList.toggle('active', isOpen);
+          button.setAttribute('aria-expanded', String(isOpen));
+        });
+      };
+
+      const openPanel = (name) => {
+        const definition = panelDefinitions[name];
+        if (!definition) return;
+        if (currentPanel === name) {
+          closePanel();
+          return;
+        }
+        clearInterval(panelTimer);
+        panelTimer = null;
+        onPresenceUpdated = null;
+        if (!currentPanel) panelReturnFocus = document.activeElement;
+        currentPanel = name;
+        sidePanelTitle.textContent = definition.title;
+        sidePanelEyebrow.textContent = definition.eyebrow;
+        sidePanelBody.replaceChildren();
+        sidePanel.hidden = false;
+        sidePanel.classList.remove('is-entering');
+        void sidePanel.offsetWidth;
+        sidePanel.classList.add('is-entering');
+        document.body.classList.add('panel-open');
+        if (sidebarIsDrawer()) setSidebarOpen(false);
+        setPanelButtons();
+        definition.render();
+        window.requestAnimationFrame(() => document.getElementById('sidePanelClose').focus({ preventScroll: true }));
+      };
+
+      function closePanel() {
+        if (!currentPanel) return;
+        clearInterval(panelTimer);
+        panelTimer = null;
+        onPresenceUpdated = null;
+        currentPanel = null;
+        sidePanel.hidden = true;
+        document.body.classList.remove('panel-open');
+        setPanelButtons();
+        if (panelReturnFocus instanceof HTMLElement && panelReturnFocus.isConnected) panelReturnFocus.focus({ preventScroll: true });
+        panelReturnFocus = null;
+      }
+
+      // Re-draw lists when the marker data or the active project actually changes.
+      let markerDataSignature = '';
+      const refreshOpenPanel = () => {
+        if (currentPanel === 'devices') renderDevicesPanel();
+        else if (currentPanel === 'inspections') renderInspectionsPanel();
+        else if (currentPanel === 'reports') renderReportsPanel();
+      };
+      panelDataHook = () => {
+        const signature = `${activeProject.id}|${getActiveProjects().map((project) => project.layouts.map((layout) =>
+          `${layout.id}:${JSON.stringify(markersByLayout.get(layout.id) || [])}`).join(',')).join(';')}`;
+        if (signature === markerDataSignature) return;
+        const firstRun = !markerDataSignature;
+        markerDataSignature = signature;
+        if (firstRun) return;
+        renderProjectList();
+        renderList();
+        const typingInPanel = sidePanel.contains(document.activeElement) && document.activeElement.matches('input, select');
+        if (currentPanel === 'devices' && typingInPanel) renderDeviceList();
+        else refreshOpenPanel();
+      };
+
+      document.querySelectorAll('[data-panel]').forEach((button) => {
+        button.addEventListener('click', () => openPanel(button.dataset.panel));
+      });
+      document.getElementById('sidePanelClose').addEventListener('click', closePanel);
+
+      // ---- Devices panel -----------------------------------------------------
+      const deviceFilters = { text: '', type: '', floor: '', venue: '' };
+      let deviceListContainer = null;
+      let deviceCountLabel = null;
+
+      const uniqueValues = (entries, key) => Array.from(new Set(entries.map(({ marker }) => (marker[key] || '').trim()).filter(Boolean)))
+        .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+      const renderDeviceList = () => {
+        if (!deviceListContainer) return;
+        const text = deviceFilters.text.trim().toLowerCase();
+        const entries = devicesInProject().filter(({ marker }) =>
+          (!deviceFilters.type || marker.deviceType === deviceFilters.type) &&
+          (!deviceFilters.floor || marker.floorLevel === deviceFilters.floor) &&
+          (!deviceFilters.venue || marker.location === deviceFilters.venue) &&
+          (!text || [marker.deviceId, marker.product, marker.deviceType, marker.floorLevel, marker.location]
+            .some((value) => String(value || '').toLowerCase().includes(text))))
+          .sort((a, b) => String(a.marker.deviceId || '~').localeCompare(String(b.marker.deviceId || '~'), undefined, { numeric: true }));
+        deviceCountLabel.textContent = `${entries.length} of ${devicesInProject().length} devices in ${activeProject.name}`;
+        deviceListContainer.replaceChildren();
+        if (!entries.length) {
+          deviceListContainer.append(emptyState('No devices found', devicesInProject().length
+            ? 'Try a different search or clear the filters.'
+            : 'Markers you place on this project\'s layouts will appear here.'));
+          return;
+        }
+        deviceListContainer.append(el('ul', { className: 'device-list' }, entries.map((entry) => deviceRow(entry))));
+      };
+
+      const renderDevicesPanel = () => {
+        const entries = devicesInProject();
+        const filterSelect = (key, label, values) => {
+          if (deviceFilters[key] && !values.includes(deviceFilters[key])) deviceFilters[key] = '';
+          return el('label', { className: 'panel-select' },
+            el('span', { text: label }),
+            el('select', {
+              onchange: (event) => { deviceFilters[key] = event.target.value; renderDeviceList(); }
+            },
+            el('option', { value: '', text: `All` }),
+            values.map((value) => el('option', { value, text: value, selected: deviceFilters[key] === value }))));
+        };
+        const search = el('input', {
+          type: 'search',
+          className: 'panel-search',
+          placeholder: 'Search ID, name, type, floor, venue…',
+          'aria-label': 'Search devices',
+          value: deviceFilters.text,
+          oninput: (event) => { deviceFilters.text = event.target.value; renderDeviceList(); }
+        });
+        deviceCountLabel = el('p', { className: 'panel-count' });
+        deviceListContainer = el('div', { className: 'panel-list-wrap' });
+        sidePanelBody.replaceChildren(
+          search,
+          el('div', { className: 'panel-filters' },
+            filterSelect('type', 'Type', uniqueValues(entries, 'deviceType')),
+            filterSelect('floor', 'Floor', uniqueValues(entries, 'floorLevel')),
+            filterSelect('venue', 'Venue', uniqueValues(entries, 'location'))),
+          deviceCountLabel,
+          deviceListContainer
+        );
+        renderDeviceList();
+      };
+
+      // ---- Inspection schedule ----------------------------------------------
+      const monthKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      const monthLabel = (date) => date.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+
+      const renderInspectionsPanel = () => {
+        const now = new Date();
+        const thisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+        const entries = devicesInProject();
+        const due = (date) => entries.filter(({ marker }) => String(marker.serviceDate || '').slice(0, 7) === monthKey(date))
+          .sort((a, b) => String(a.marker.deviceId).localeCompare(String(b.marker.deviceId), undefined, { numeric: true }));
+        const withoutDate = entries.filter(({ marker }) => !marker.serviceDate).length;
+        const group = (title, date) => {
+          const items = due(date);
+          return el('section', { className: 'panel-group' },
+            el('h3', { className: 'panel-group-title' },
+              el('span', { text: title }),
+              el('small', { text: monthLabel(date) }),
+              el('em', { className: 'panel-group-count', text: String(items.length) })),
+            items.length
+              ? el('ul', { className: 'device-list' }, items.map((entry) => deviceRow(entry, {
+                extra: el('span', { className: 'date-pill', text: formatMonthYear(entry.marker.serviceDate) })
+              })))
+              : emptyState(`Nothing due in ${monthLabel(date)}`, null));
+        };
+        sidePanelBody.replaceChildren(
+          el('p', { className: 'panel-intro', text: `Devices in ${activeProject.name} with a Next Inspection Date in the next two months.` }),
+          group('This month', thisMonth),
+          group('Next month', nextMonth),
+          withoutDate ? el('p', { className: 'panel-note', text: `${withoutDate} ${withoutDate === 1 ? 'device has' : 'devices have'} no inspection date set.` }) : null
+        );
+      };
+
+      // ---- Activity log -----------------------------------------------------
+      const activityIcons = {
+        add: 'M12 5v14M5 12h14',
+        edit: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z',
+        move: 'M12 3v18M3 12h18m-15-4-3 4 3 4m12-8 3 4-3 4M8 6l4-3 4 3M8 18l4 3 4-3',
+        delete: 'M4 7h16M10 11v6m4-6v6M5.5 7l1 14h13l1-14M9 7V4h6v3',
+        rename: 'M4 7V4h16v3M9 20h6M12 4v16',
+        create: 'M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM12 10v6m-3-3h6'
+      };
+      const svgIcon = (path) => {
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '1.9');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+        svg.setAttribute('aria-hidden', 'true');
+        const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        p.setAttribute('d', path);
+        svg.append(p);
+        return svg;
+      };
+
+      const renderActivityPanel = async () => {
+        if (!authSession) {
+          sidePanelBody.replaceChildren(emptyState('Sign in to see activity', 'The activity log shows who added, moved, edited or deleted devices and layouts.'));
+          return;
+        }
+        const list = el('div', { className: 'panel-list-wrap' }, el('p', { className: 'panel-loading', text: 'Loading activity…' }));
+        sidePanelBody.replaceChildren(
+          el('p', { className: 'panel-intro', text: 'The latest 100 changes on this site, newest first.' }),
+          list);
+        const load = async () => {
+          if (currentPanel !== 'activity') return;
+          try {
+            const query = new URLSearchParams({
+              site_id: `eq.${markerCloudSiteId}`,
+              order: 'created_at.desc',
+              limit: '100'
+            });
+            const response = await supabaseFetch(`${getMarkerCloudRestUrl()}/parkview_activity?${query}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            const rows = await response.json();
+            if (currentPanel !== 'activity') return;
+            list.replaceChildren();
+            if (!rows.length) {
+              list.append(emptyState('No activity yet', 'Changes made by editors will show up here.'));
+              return;
+            }
+            list.append(el('ol', { className: 'activity-list' }, rows.map((row) => {
+              const verb = String(row.action || '').split('.')[1] || 'edit';
+              return el('li', { className: `activity-item is-${verb}` },
+                el('span', { className: 'activity-icon' }, svgIcon(activityIcons[verb] || activityIcons.edit)),
+                el('div', { className: 'activity-copy' },
+                  el('strong', { text: row.summary }),
+                  el('small', { text: [row.project_name, row.layout_name].filter(Boolean).join(' › ') }),
+                  el('small', { className: 'activity-meta' },
+                    el('span', { text: row.user_name }),
+                    el('span', { text: ' · ' }),
+                    el('time', { datetime: row.created_at, title: formatDateTime(row.created_at), text: formatAgo(row.created_at) }))));
+            })));
+          } catch (error) {
+            list.replaceChildren(emptyState('Activity log unavailable', 'Run the latest supabase.sql in Supabase to turn on the activity log.'));
+          }
+        };
+        await load();
+        panelTimer = setInterval(load, 15000);
+      };
+
+      // ---- Reports ----------------------------------------------------------
+      let reportScope = 'project';
+      const reportColumns = [
+        ['Project', (e) => e.project.name],
+        ['Layout', (e) => e.layout.name],
+        ['Device ID', (e) => e.marker.deviceId],
+        ['Device Name', (e) => e.marker.product],
+        ['Floor Level', (e) => e.marker.floorLevel],
+        ['Venue', (e) => e.marker.location],
+        ['Device Type', (e) => e.marker.deviceType],
+        ['Next Inspection', (e) => formatMonthYear(e.marker.serviceDate)],
+        ['Manufacturing Date', (e) => formatMonthYear(e.marker.manufacturingDate)],
+        ['Photos', (e) => (Array.isArray(e.marker.photos) ? e.marker.photos.length : 0)]
+      ];
+      const reportEntries = () => (reportScope === 'all' ? devicesEverywhere() : devicesInProject())
+        .sort((a, b) => a.project.name.localeCompare(b.project.name) || a.layoutIndex - b.layoutIndex ||
+          String(a.marker.deviceId).localeCompare(String(b.marker.deviceId), undefined, { numeric: true }));
+      const reportFileName = (ext) => {
+        const scopeName = reportScope === 'all' ? 'all-projects' : activeProject.name;
+        const slug = scopeName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'project';
+        return `mquest-devices-${slug}-${new Date().toISOString().slice(0, 10)}.${ext}`;
+      };
+
+      const downloadCsv = () => {
+        const entries = reportEntries();
+        const cell = (value) => {
+          let text = String(value ?? '');
+          if (/^[=+\-@]/.test(text)) text = `'${text}`; // stop spreadsheet formulas
+          return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+        };
+        const lines = [reportColumns.map(([title]) => cell(title)).join(',')]
+          .concat(entries.map((entry) => reportColumns.map(([, get]) => cell(get(entry))).join(',')));
+        const blob = new Blob([`﻿${lines.join('\r\n')}`], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = el('a', { href: url, download: reportFileName('csv') });
+        document.body.append(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        announce(`Exported ${entries.length} ${entries.length === 1 ? 'device' : 'devices'} to CSV.`);
+      };
+
+      const printReport = () => {
+        const entries = reportEntries();
+        const title = reportScope === 'all' ? 'All projects' : activeProject.name;
+        const win = window.open('', '_blank');
+        if (!win) {
+          announce('Allow pop-ups for this site to print or save the report as PDF.', true);
+          return;
+        }
+        const rows = entries.map((entry) => `<tr>${reportColumns.map(([, get]) => `<td>${escapeHtml(String(get(entry) ?? ''))}</td>`).join('')}</tr>`).join('');
+        win.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(`Device register – ${title}`)}</title>
+<style>
+  body { margin: 32px; color: #0b1220; font: 12px/1.45 Inter, "Segoe UI", Arial, sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 18px; padding-bottom: 12px; border-bottom: 3px solid #1677d2; }
+  h1 { margin: 0; font-size: 22px; } p { margin: 4px 0 0; color: #5b6b80; }
+  table { width: 100%; border-collapse: collapse; }
+  th { padding: 8px; color: #fff; background: #0b1220; font-size: 10px; letter-spacing: .05em; text-align: left; text-transform: uppercase; }
+  td { padding: 7px 8px; border-bottom: 1px solid #e3e9f1; vertical-align: top; }
+  tr:nth-child(even) td { background: #f5f8fc; }
+  @page { size: A4 landscape; margin: 14mm; }
+  @media print { body { margin: 0; } }
+</style></head><body>
+<header><div><h1>Device register</h1><p>${escapeHtml(title)} · ${entries.length} devices</p></div>
+<p>MQuest · ${escapeHtml(new Date().toLocaleString('en-GB'))}</p></header>
+<table><thead><tr>${reportColumns.map(([t]) => `<th>${escapeHtml(t)}</th>`).join('')}</tr></thead><tbody>${rows || '<tr><td colspan="10">No devices.</td></tr>'}</tbody></table>
+</body></html>`);
+        win.document.close();
+        win.focus();
+        setTimeout(() => win.print(), 250);
+      };
+
+      const renderReportsPanel = () => {
+        const projectDevices = devicesInProject();
+        const allDevices = devicesEverywhere();
+        const withDates = projectDevices.filter(({ marker }) => marker.serviceDate).length;
+        const stat = (value, label) => el('div', { className: 'stat-card' }, el('strong', { text: String(value) }), el('span', { text: label }));
+        const scopeButton = (value, label) => el('button', {
+          type: 'button',
+          className: `segmented-option${reportScope === value ? ' active' : ''}`,
+          'aria-pressed': String(reportScope === value),
+          onclick: () => { reportScope = value; renderReportsPanel(); }
+        }, label);
+        sidePanelBody.replaceChildren(
+          el('div', { className: 'stat-grid' },
+            stat(projectDevices.length, 'Devices in project'),
+            stat(activeProject.layouts.length, 'Layouts'),
+            stat(withDates, 'With inspection date'),
+            stat(allDevices.length, 'Devices, all projects')),
+          el('h3', { className: 'panel-subheading', text: 'Device register' }),
+          el('p', { className: 'panel-intro', text: 'Every device with its layout, location, type and dates.' }),
+          el('div', { className: 'segmented', role: 'group', 'aria-label': 'Report scope' },
+            scopeButton('project', `This project (${projectDevices.length})`),
+            scopeButton('all', `All projects (${allDevices.length})`)),
+          el('div', { className: 'panel-actions' },
+            el('button', { type: 'button', className: 'panel-button primary', onclick: downloadCsv }, 'Download CSV'),
+            el('button', { type: 'button', className: 'panel-button', onclick: printReport }, 'Print / Save as PDF')),
+          el('p', { className: 'panel-note', text: 'CSV opens in Excel or Google Sheets. For PDF, choose "Save as PDF" in the print window.' })
+        );
+      };
+
+      // ---- Users (owner only) -----------------------------------------------
+      let usersTab = 'users';
+      let usersData = [];
+      let usersError = '';
+
+      const renderUsersPanel = async () => {
+        if (!isWorkspaceOwner()) {
+          sidePanelBody.replaceChildren(emptyState('Owners only', 'Sign in with a workspace owner account to see users and guests.'));
+          return;
+        }
+        const summary = el('div', { className: 'stat-grid' });
+        const tabs = el('div', { className: 'segmented', role: 'tablist', 'aria-label': 'User type' });
+        const listWrap = el('div', { className: 'panel-list-wrap' }, el('p', { className: 'panel-loading', text: 'Loading users…' }));
+        sidePanelBody.replaceChildren(summary, tabs, listWrap,
+          el('details', { className: 'panel-help' },
+            el('summary', { text: 'How do I add a new user?' }),
+            el('ol', {},
+              el('li', { text: 'In Supabase, open Authentication → Users → Add user, and send them an invite (or create them with a password).' }),
+              el('li', { text: 'Ask them to sign in once. They then appear here as a Viewer.' }),
+              el('li', { text: 'Change their role here. It applies the next time they sign in, or within an hour.' }))));
+
+        const onlineMap = () => new Map(latestPresenceRows.map((row) => [row.user_id, row]));
+        // Active time ticks live for online users between database updates.
+        const liveSeconds = (user, online) => {
+          const base = Number(user.total_active_seconds) || 0;
+          if (!online) return base;
+          const since = (Date.now() - new Date(user.last_seen_at).getTime()) / 1000;
+          return base + Math.min(45, Math.max(0, since));
+        };
+
+        const draw = () => {
+          if (currentPanel !== 'users') return;
+          const online = onlineMap();
+          const members = usersData.filter((user) => user.role !== 'guest');
+          const guests = usersData.filter((user) => user.role === 'guest');
+          const membersOnline = members.filter((user) => online.has(user.user_id)).length;
+          const guestsOnline = guests.filter((user) => online.has(user.user_id)).length;
+          const guestSeconds = guests.reduce((sum, user) => sum + liveSeconds(user, online.has(user.user_id)), 0);
+          const stat = (value, label, live) => el('div', { className: `stat-card${live ? ' is-live' : ''}` },
+            el('strong', { text: String(value) }), el('span', { text: label }));
+          summary.replaceChildren(
+            stat(members.length, 'Signed-in users'),
+            stat(membersOnline, 'Users online now', membersOnline > 0),
+            stat(guests.length, 'Guests (all time)'),
+            stat(guestsOnline, 'Guests online now', guestsOnline > 0));
+
+          const tab = (value, label) => el('button', {
+            type: 'button',
+            role: 'tab',
+            className: `segmented-option${usersTab === value ? ' active' : ''}`,
+            'aria-selected': String(usersTab === value),
+            onclick: () => { usersTab = value; draw(); }
+          }, label);
+          tabs.replaceChildren(tab('users', `Users (${members.length})`), tab('guests', `Guests (${guests.length})`));
+
+          listWrap.replaceChildren();
+          if (usersError) {
+            listWrap.append(emptyState('Could not load users', usersError));
+            return;
+          }
+          const people = (usersTab === 'users' ? members : guests).slice().sort((a, b) =>
+            Number(online.has(b.user_id)) - Number(online.has(a.user_id)) ||
+            new Date(b.last_seen_at) - new Date(a.last_seen_at));
+          if (!people.length) {
+            listWrap.append(emptyState(usersTab === 'users' ? 'No users yet' : 'No guests yet',
+              usersTab === 'users' ? 'People appear here after they sign in.' : 'Visitors who use "Continue as a Guest" appear here.'));
+            return;
+          }
+          if (usersTab === 'guests') {
+            listWrap.append(el('p', { className: 'panel-count', text: `Total guest time: ${formatDuration(guestSeconds)}` }));
+          }
+          listWrap.append(el('ul', { className: 'user-list' }, people.map((user) => {
+            const presence = online.get(user.user_id);
+            const isOnline = Boolean(presence);
+            const isMe = authSession && user.user_id === authSession.user.id;
+            const name = user.display_name || 'User';
+            let roleControl = null;
+            if (usersTab === 'users') {
+              roleControl = el('select', {
+                className: 'role-select',
+                'aria-label': `Role for ${name}`,
+                disabled: isMe,
+                title: isMe ? 'You cannot change your own role' : 'Change role',
+                onchange: async (event) => {
+                  const select = event.target;
+                  const role = select.value;
+                  select.disabled = true;
+                  try {
+                    const response = await supabaseFetch(`${getMarkerCloudRestUrl()}/rpc/parkview_set_user_role`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ p_user_id: user.user_id, p_role: role })
+                    });
+                    if (!response.ok) {
+                      const detail = await response.json().catch(() => ({}));
+                      throw new Error(detail.message || `HTTP ${response.status}`);
+                    }
+                    user.role = role;
+                    announce(`${name} is now ${role === 'owner' ? 'an owner' : `an ${role}`}. It applies when they next sign in (within an hour).`);
+                  } catch (error) {
+                    select.value = user.role;
+                    announce(`Could not change the role: ${error.message}`, true);
+                  } finally {
+                    select.disabled = isMe;
+                  }
+                }
+              }, ['viewer', 'editor', 'owner'].map((role) => el('option', {
+                value: role,
+                selected: user.role === role,
+                text: role.charAt(0).toUpperCase() + role.slice(1)
+              })));
+            }
+            return el('li', { className: `user-card${isOnline ? ' is-online' : ''}` },
+              el('div', { className: 'user-card-head' },
+                el('span', { className: 'user-avatar', style: `background:${nameColorHash(name)}`, 'aria-hidden': 'true',
+                  text: name.replace(/^Guest #/, '#').charAt(0).toUpperCase() === '#' ? 'G' : name.charAt(0).toUpperCase() }),
+                el('div', { className: 'user-card-name' },
+                  el('strong', {}, name, isMe ? el('span', { className: 'user-you', text: 'You' }) : null),
+                  el('small', { text: user.email || (usersTab === 'guests' ? `${user.visit_count || 1} ${Number(user.visit_count) === 1 ? 'visit' : 'visits'}` : '') })),
+                roleControl),
+              el('div', { className: 'user-card-status' },
+                el('span', { className: `status-pill${isOnline ? ' online' : ''}` },
+                  el('i', { 'aria-hidden': 'true' }),
+                  isOnline ? `Online · ${presence.layout_name || 'Dashboard'}` : 'Offline')),
+              el('dl', { className: 'user-stats' },
+                el('div', {}, el('dt', { text: 'Active time' }),
+                  el('dd', { className: 'user-active-time', dataset: { userId: user.user_id }, text: formatDuration(liveSeconds(user, isOnline)) })),
+                el('div', {}, el('dt', { text: 'Last active' }),
+                  el('dd', { title: formatDateTime(user.last_seen_at), text: isOnline ? 'Now' : formatAgo(user.last_seen_at) })),
+                el('div', {}, el('dt', { text: 'First seen' }),
+                  el('dd', { title: formatDateTime(user.first_seen_at || user.created_at), text: new Date(user.first_seen_at || user.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) }))));
+          })));
+        };
+
+        const load = async () => {
+          if (currentPanel !== 'users') return;
+          try {
+            const [users] = await Promise.all([fetchAllUsers(), refreshPresenceUI()]);
+            usersData = users;
+            usersError = '';
+          } catch (error) {
+            usersError = error.message;
+          }
+          draw();
+        };
+
+        // Tick the online users' timers every second without refetching.
+        const tick = () => {
+          if (currentPanel !== 'users') return;
+          const online = onlineMap();
+          sidePanelBody.querySelectorAll('.user-active-time').forEach((cell) => {
+            const user = usersData.find((item) => item.user_id === cell.dataset.userId);
+            if (user && online.has(user.user_id)) cell.textContent = formatDuration(liveSeconds(user, true));
+          });
+        };
+
+        onPresenceUpdated = () => draw();
+        await load();
+        let ticks = 0;
+        panelTimer = setInterval(() => {
+          ticks += 1;
+          if (ticks % 10 === 0) load();
+          else tick();
+        }, 1000);
+      };
+
+      // ---- Settings & Help --------------------------------------------------
+      const renderSettingsPanel = () => {
+        const isDark = document.body.dataset.theme === 'dark';
+        const themeButton = (value, label) => el('button', {
+          type: 'button',
+          className: `segmented-option${(value === 'dark') === isDark ? ' active' : ''}`,
+          'aria-pressed': String((value === 'dark') === isDark),
+          onclick: () => {
+            setTheme(value);
+            try { localStorage.setItem(themeStorageKey, value); } catch (error) { /* ignore */ }
+            renderSettingsPanel();
+          }
+        }, label);
+        const role = authSession ? authSession.user.role : 'guest';
+        const roleText = { owner: 'Owner — full access, can manage users', editor: 'Editor — can add and change devices and layouts', viewer: 'Viewer — can look but not change', guest: 'Guest — view only' }[role];
+        const shortcut = (keys, text) => el('li', {}, el('span', {}, keys.map((key) => el('kbd', { text: key }))), el('span', { text }));
+        sidePanelBody.replaceChildren(
+          el('h3', { className: 'panel-subheading', text: 'Account' }),
+          el('div', { className: 'settings-account' },
+            el('strong', { text: authSession ? authSession.user.email : 'Not signed in' }),
+            el('small', { text: roleText }),
+            el('button', {
+              type: 'button',
+              className: 'panel-button',
+              onclick: () => { closePanel(); (authSession ? accountSignOut : accountSignIn).click(); }
+            }, authSession ? 'Sign out' : 'Sign in')),
+          el('h3', { className: 'panel-subheading', text: 'Appearance' }),
+          el('div', { className: 'segmented', role: 'group', 'aria-label': 'Theme' }, themeButton('light', 'Light'), themeButton('dark', 'Dark')),
+          el('h3', { className: 'panel-subheading', text: 'Keyboard shortcuts' }),
+          el('ul', { className: 'shortcut-list' },
+            shortcut(['/'], 'Find a device'),
+            shortcut(['←', '→'], 'Previous / next layout'),
+            shortcut(['+', '−'], 'Zoom in / out'),
+            shortcut(['Esc'], 'Close popup or panel, reset view')),
+          el('h3', { className: 'panel-subheading', text: 'Help' }),
+          el('ul', { className: 'help-list' },
+            el('li', { text: 'Tap a blue marker to see the device details. Use the search box above the plan to jump straight to a device ID.' }),
+            el('li', { text: 'Pinch or scroll to zoom, drag to pan. Use the arrows to switch layouts.' }),
+            el('li', { text: 'Editors can place a marker with the pin button, move one with the arrows button, and add layouts with the + next to Layouts.' }),
+            el('li', { text: 'Need an account or a different role? Contact your MQuest workspace owner.' }))
+        );
+      };
+
+      // ---- Live sync status (top bar) ----------------------------------------
+      const syncStatus = document.getElementById('syncStatus');
+      const syncStatusText = document.getElementById('syncStatusText');
+      const updateSyncStatus = () => {
+        let state = 'live';
+        let text;
+        if (!navigator.onLine) {
+          state = 'offline';
+          text = 'Offline · showing saved data';
+        } else if (lastCloudSyncFailed && !lastCloudSyncAt) {
+          state = 'offline';
+          text = 'Not synced · showing saved data';
+        } else if (!lastCloudSyncAt) {
+          state = 'connecting';
+          text = 'Connecting…';
+        } else {
+          const seconds = Math.max(0, Math.round((Date.now() - lastCloudSyncAt) / 1000));
+          if (lastCloudSyncFailed || seconds > 60) state = 'stale';
+          text = `${state === 'stale' ? 'Reconnecting' : 'Live'} · synced ${seconds < 60 ? `${seconds}s` : formatAgo(lastCloudSyncAt).replace(' ago', '')} ago`;
+        }
+        syncStatus.dataset.state = state;
+        syncStatusText.textContent = text;
+        syncStatus.title = lastCloudSyncAt ? `Last synced ${formatDateTime(lastCloudSyncAt)}` : '';
+      };
+      updateSyncStatus();
+      setInterval(updateSyncStatus, 1000);
+      window.addEventListener('online', updateSyncStatus);
+      window.addEventListener('offline', updateSyncStatus);
+
+      // Keep the plan's aspect ratio available to CSS (phones size the plan to fit).
+      image.addEventListener('load', () => {
+        if (image.naturalWidth && image.naturalHeight) {
+          stage.style.setProperty('--plan-aspect', `${image.naturalWidth} / ${image.naturalHeight}`);
+        }
+      });
+
+      // Global keys: "/" opens device search, Esc closes the panel / drawer first.
+      window.addEventListener('keydown', (event) => {
+        const typing = event.target.matches('input, textarea, select, [contenteditable="true"]');
+        if (event.key === '/' && !typing && !event.ctrlKey && !event.metaKey && !event.altKey &&
+          loginScreen.hidden && photoViewer.hidden) {
+          event.preventDefault();
+          deviceSearchInput.focus();
+          deviceSearchInput.select();
+          return;
+        }
+        if (event.key !== 'Escape' || !loginScreen.hidden || !photoViewer.hidden) return;
+        if (currentPanel && !markerEditor.contains(event.target)) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          closePanel();
+        } else if (document.body.classList.contains('sidebar-open')) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          setSidebarOpen(false);
+          sidebarMenuButton.focus();
+        }
+      }, true);
+
+      // Signing in or out changes what the panels may show.
+      panelRoleHook = () => {
+        if (!currentPanel) return;
+        const name = currentPanel;
+        clearInterval(panelTimer);
+        panelTimer = null;
+        onPresenceUpdated = null;
+        sidePanelBody.replaceChildren();
+        panelDefinitions[name].render();
+      };
+
       restoreAuthSession();
       handleAuthRedirect();
       if (readLoginLock().until > Date.now()) applyLoginLock();
