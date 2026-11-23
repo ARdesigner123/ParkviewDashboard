@@ -349,7 +349,7 @@
       const usersRestUrl = () => `${getMarkerCloudRestUrl()}/parkview_users`;
       const presenceStaleMs = 45000;
       const presenceHeartbeatMs = 15000;
-      const presenceFetchMs = 10000;
+      const presenceFetchMs = 5000;
       const guestIdKey = `mquest-parkview-guest-id:${markerCloudSiteId}`;
       let presenceFetchTimer = null;
       let heartbeatWarned = false;
@@ -490,52 +490,186 @@
         if (onPresenceUpdated) onPresenceUpdated(latestPresenceRows);
       };
 
-      // Small avatars on the plan and in the layout list showing who else is here.
+      const isRowMe = (row) => row.user_id === presenceUserId;
+      const avatarInitial = (name) => {
+        const text = String(name || 'U');
+        return /^Guest #/.test(text) ? 'G' : text.charAt(0).toUpperCase();
+      };
+      const makeAvatar = (row, className) => {
+        const avatar = document.createElement('span');
+        avatar.className = `${className}${isRowMe(row) ? ' is-me' : ''}${row.role === 'guest' ? ' is-guest' : ''}`;
+        avatar.style.background = nameColorHash(row.display_name || row.user_id);
+        avatar.textContent = avatarInitial(row.display_name);
+        avatar.title = isRowMe(row) ? `${row.display_name} (you)` : row.display_name;
+        return avatar;
+      };
+      const describePeople = (rows) => rows.map((row) => (isRowMe(row) ? `${row.display_name} (you)` : row.display_name)).join(', ');
+
+      // Avatars on the plan, on each layout / project in the sidebar, and the live count.
       const renderPresenceAvatars = (rows) => {
         const layer = document.getElementById('presenceLayer');
         layer.replaceChildren();
         const currentLayout = layouts[selectedIndex];
-        if (!currentLayout || !activeProject) {
+        if (currentLayout && activeProject) {
+          const here = rows.filter((row) => row.project_id === activeProject.id &&
+            row.layout_id === currentLayout.id && !isRowMe(row));
+          here.slice(0, 6).forEach((row) => {
+            const avatar = makeAvatar(row, 'presence-avatar');
+            avatar.title = `${row.display_name} is viewing this layout`;
+            layer.appendChild(avatar);
+          });
+          if (here.length) layer.removeAttribute('aria-hidden');
+          else layer.setAttribute('aria-hidden', 'true');
+        } else {
           layer.setAttribute('aria-hidden', 'true');
-          return;
         }
-        const here = rows.filter((row) => row.project_id === activeProject.id &&
-          row.layout_id === currentLayout.id && row.user_id !== presenceUserId);
-        if (here.length) layer.removeAttribute('aria-hidden');
-        else layer.setAttribute('aria-hidden', 'true');
-        here.slice(0, 6).forEach((user) => {
-          const avatar = document.createElement('div');
-          avatar.className = 'presence-avatar';
-          avatar.style.background = nameColorHash(user.display_name || user.user_id);
-          avatar.title = `${user.display_name} is viewing this layout`;
-          avatar.textContent = (user.display_name || 'U').replace(/^Guest #/, 'G').charAt(0).toUpperCase();
-          layer.appendChild(avatar);
-        });
 
+        // Sidebar → Layouts: who is on each layout (you included)
         document.querySelectorAll('#layoutList .layout-item').forEach((item) => {
           item.querySelector('.layout-presence-avatars')?.remove();
-          const usersHere = rows.filter((row) => row.project_id === activeProject.id &&
-            row.layout_id === item.dataset.layoutId && row.user_id !== presenceUserId);
+          const usersHere = activeProject ? rows.filter((row) => row.project_id === activeProject.id &&
+            row.layout_id === item.dataset.layoutId) : [];
+          item.dataset.liveCount = String(usersHere.length);
+          item.classList.toggle('has-live-users', usersHere.length > 0);
           if (!usersHere.length) return;
           const wrap = document.createElement('span');
           wrap.className = 'layout-presence-avatars';
-          usersHere.slice(0, 3).forEach((user) => {
-            const av = document.createElement('span');
-            av.className = 'layout-presence-avatar';
-            av.style.background = nameColorHash(user.display_name || user.user_id);
-            av.title = `${user.display_name} is here`;
-            av.textContent = (user.display_name || 'U').replace(/^Guest #/, 'G').charAt(0).toUpperCase();
-            wrap.appendChild(av);
-          });
+          wrap.title = `On this layout: ${describePeople(usersHere)}`;
+          wrap.setAttribute('aria-label', `${usersHere.length} on this layout: ${describePeople(usersHere)}`);
+          const ordered = usersHere.slice().sort((a, b) => Number(isRowMe(b)) - Number(isRowMe(a)));
+          ordered.slice(0, 3).forEach((row) => wrap.appendChild(makeAvatar(row, 'layout-presence-avatar')));
           if (usersHere.length > 3) {
             const more = document.createElement('span');
             more.className = 'layout-presence-avatar more';
             more.textContent = `+${usersHere.length - 3}`;
             wrap.appendChild(more);
           }
-          item.appendChild(wrap);
+          // Sits under the layout name, next to the device count, so the
+          // rename / delete buttons never cover it.
+          (item.querySelector('.layout-item-copy') || item).appendChild(wrap);
         });
+
+        // Sidebar → Projects: how many people are in each project
+        document.querySelectorAll('#projectList .sidebar-item').forEach((button) => {
+          button.querySelector('.project-live-count')?.remove();
+          const inProject = rows.filter((row) => row.project_id === button.dataset.projectId);
+          if (!inProject.length) return;
+          const badge = document.createElement('span');
+          badge.className = 'project-live-count';
+          badge.title = `In this project: ${describePeople(inProject)}`;
+          badge.setAttribute('aria-label', `${inProject.length} live in this project`);
+          badge.textContent = String(inProject.length);
+          button.appendChild(badge);
+        });
+
+        renderLiveUsers(rows);
       };
+
+      // ---- Top bar: live users (signed-in users only) -------------------------
+      const liveUsersButton = document.getElementById('liveUsersButton');
+      const liveUsersPopover = document.getElementById('liveUsersPopover');
+      const liveUserCount = document.getElementById('liveUserCount');
+
+      const goToLayout = (projectId, layoutId) => {
+        const project = getActiveProjects().find((item) => item.id === projectId);
+        if (!project) return false;
+        if (project !== activeProject) selectProject(project.id);
+        const index = layouts.findIndex((layout) => layout.id === layoutId);
+        if (index === -1) return false;
+        if (index !== selectedIndex) selectLayout(index);
+        return true;
+      };
+
+      const renderLiveUsers = (rows) => {
+        const signedIn = rows.filter((row) => row.role !== 'guest').length;
+        const guests = rows.length - signedIn;
+        liveUserCount.textContent = String(rows.length);
+        liveUsersButton.setAttribute('aria-label', `${rows.length} live ${rows.length === 1 ? 'user' : 'users'}. Show who is online.`);
+        liveUsersButton.classList.toggle('is-busy', rows.length > 1);
+        document.getElementById('liveUsersSubtitle').textContent =
+          `${signedIn} signed in · ${guests} ${guests === 1 ? 'guest' : 'guests'}`;
+        const body = document.getElementById('liveUsersBody');
+        body.replaceChildren();
+        if (!rows.length) {
+          const empty = document.createElement('p');
+          empty.className = 'live-users-empty';
+          empty.textContent = 'Nobody else is online right now.';
+          body.append(empty);
+          return;
+        }
+        // Group people by where they are
+        const groups = new Map();
+        rows.forEach((row) => {
+          const key = `${row.project_id}\u0000${row.layout_id}`;
+          if (!groups.has(key)) groups.set(key, { row, people: [] });
+          groups.get(key).people.push(row);
+        });
+        Array.from(groups.values())
+          .sort((a, b) => b.people.length - a.people.length)
+          .forEach(({ row, people }) => {
+            const section = document.createElement('section');
+            section.className = 'live-group';
+            const head = document.createElement('button');
+            head.type = 'button';
+            head.className = 'live-group-head';
+            const isHere = activeProject && row.project_id === activeProject.id &&
+              layouts[selectedIndex] && row.layout_id === layouts[selectedIndex].id;
+            const where = document.createElement('span');
+            where.className = 'live-group-where';
+            const projectName = document.createElement('small');
+            projectName.textContent = row.project_name || 'Project';
+            const layoutName = document.createElement('strong');
+            layoutName.textContent = row.layout_name || 'Layout';
+            where.append(projectName, layoutName);
+            const go = document.createElement('span');
+            go.className = 'live-group-go';
+            go.textContent = isHere ? 'You are here' : 'Go to layout';
+            head.append(where, go);
+            head.disabled = Boolean(isHere);
+            head.addEventListener('click', () => {
+              if (goToLayout(row.project_id, row.layout_id)) closeLiveUsers();
+              else announce('That layout is not available on this device.', true);
+            });
+            const list = document.createElement('ul');
+            list.className = 'live-group-people';
+            people.sort((a, b) => Number(isRowMe(b)) - Number(isRowMe(a))).forEach((person) => {
+              const li = document.createElement('li');
+              const name = document.createElement('span');
+              name.className = 'live-person-name';
+              name.textContent = person.display_name;
+              const role = document.createElement('small');
+              role.className = 'live-person-role';
+              role.textContent = isRowMe(person) ? 'You'
+                : person.role === 'guest' ? 'Guest' : person.role.charAt(0).toUpperCase() + person.role.slice(1);
+              li.append(makeAvatar(person, 'live-person-avatar'), name, role);
+              list.append(li);
+            });
+            section.append(head, list);
+            body.append(section);
+          });
+      };
+
+      const closeLiveUsers = () => {
+        liveUsersPopover.hidden = true;
+        liveUsersButton.setAttribute('aria-expanded', 'false');
+      };
+      liveUsersButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const open = liveUsersPopover.hidden;
+        closeAccountPopover();
+        liveUsersPopover.hidden = !open;
+        liveUsersButton.setAttribute('aria-expanded', String(open));
+        if (open) refreshPresenceUI();
+      });
+      document.addEventListener('click', (event) => {
+        if (!liveUsersPopover.hidden && !liveUsersPopover.contains(event.target)) closeLiveUsers();
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !liveUsersPopover.hidden) {
+          closeLiveUsers();
+          liveUsersButton.focus();
+        }
+      });
 
       const setAuthSession = (session) => {
         if (presenceUserId) stopPresence();
@@ -708,6 +842,7 @@
           button.className = `sidebar-item${isActive ? ' active' : ''}`;
           button.setAttribute('aria-current', isActive ? 'true' : 'false');
           button.title = project.name;
+          button.dataset.projectId = project.id;
           const dot = document.createElement('span');
           dot.className = 'sidebar-item-dot';
           dot.setAttribute('aria-hidden', 'true');
@@ -731,6 +866,7 @@
           li.append(button);
           projectList.append(li);
         });
+        renderPresenceAvatars(latestPresenceRows);
       };
 
       const selectProject = (projectId) => {

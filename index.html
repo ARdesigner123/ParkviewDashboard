@@ -26,6 +26,20 @@
           <span class="status-dot" aria-hidden="true"></span>
           <span id="syncStatusText">Connecting…</span>
         </div>
+        <div class="live-users signed-in-only" id="liveUsers">
+          <button class="live-users-button" id="liveUsersButton" type="button" aria-expanded="false" aria-controls="liveUsersPopover" aria-label="Live users">
+            <span class="live-users-dot" aria-hidden="true"></span>
+            <strong id="liveUserCount">0</strong>
+            <span class="live-users-label">live</span>
+          </button>
+          <div class="live-users-popover" id="liveUsersPopover" role="dialog" aria-labelledby="liveUsersTitle" hidden>
+            <div class="live-users-heading">
+              <strong id="liveUsersTitle">Live now</strong>
+              <span id="liveUsersSubtitle"></span>
+            </div>
+            <div class="live-users-body" id="liveUsersBody"></div>
+          </div>
+        </div>
         <div class="topbar-clock" aria-label="Current date and time">
           <time id="clockTime"></time>
           <span id="clockDate"></span>
