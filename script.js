@@ -1451,20 +1451,10 @@
         };
       };
 
-      // True when a stored "YYYY-MM" inspection month is earlier than this month.
-      const isInspectionOverdue = (value) => {
-        const match = String(value || '').match(/^(\d{4})-(\d{2})/);
-        if (!match) return false;
-        const now = new Date();
-        const due = Number(match[1]) * 12 + Number(match[2]) - 1;
-        return due < now.getFullYear() * 12 + now.getMonth();
-      };
-
       // Expanding ring at a marker's tip — the "ping" when it is tapped.
       const spawnMarkerRipple = (pin) => {
         const ripple = document.createElement('span');
         ripple.className = 'marker-ripple';
-        if (pin.classList.contains('is-overdue')) ripple.classList.add('is-alert');
         ripple.style.left = pin.style.left;
         ripple.style.top = pin.style.top;
         ripple.addEventListener('animationend', () => ripple.remove(), { once: true });
@@ -1556,10 +1546,6 @@ const renderMarkers = () => {
           markerSVG.append(dot);
         }
 
-        if (isInspectionOverdue(marker.serviceDate)) {
-          pin.classList.add('is-overdue');
-          pin.title = `${pin.title} — inspection overdue`;
-        }
         if (!markerMoveMode && marker.id === editingMarkerId && !markerEditor.hidden) {
           pin.classList.add('is-active');
         }
@@ -1889,13 +1875,6 @@ const renderMarkers = () => {
           itemValue.textContent = value || '—';
           item.append(itemLabel, itemValue);
           if (label === 'Device ID') item.classList.add('is-primary');
-          if (label === 'Next Inspection Date' && isInspectionOverdue(marker.serviceDate)) {
-            item.classList.add('is-alert');
-            const flag = document.createElement('em');
-            flag.className = 'marker-detail-flag';
-            flag.textContent = 'Overdue';
-            itemValue.append(flag);
-          }
           detailsGrid.append(item);
         });
         markerEditor.hidden = false;
