@@ -2858,3 +2858,55 @@ body[data-theme="dark"] .add-button.secondary { box-shadow: none; }
   .marker-detail-item { min-height: 58px; padding: 10px 11px; }
   .marker-detail-item.is-primary strong { font-size: 20px; }
 }
+
+/* ---------- Sign-in screen additions ---------- */
+.login-form[hidden], .login-guest-options[hidden], .login-hint[hidden] { display: none !important; }
+.login-label-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
+.login-label-row label { margin-top: 0; }
+.login-link, .login-back {
+  padding: 2px 0;
+  border: 0;
+  color: var(--blue);
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.login-link:hover, .login-back:hover { color: var(--blue-dark); text-decoration: underline; }
+.login-link:focus-visible, .login-back:focus-visible, .password-toggle:focus-visible { outline: 3px solid #86c7ff; outline-offset: 2px; border-radius: 6px; }
+.login-back { justify-self: center; margin-top: 6px; }
+.login-back::before { content: "\2190  "; }
+.login-input-wrap.has-toggle input { padding-right: 46px; }
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  color: #7b8a9c;
+  background: transparent;
+  cursor: pointer;
+  transform: translateY(-50%);
+  transition: color .15s ease, background .15s ease;
+}
+.password-toggle:hover { color: var(--blue-dark); background: var(--blue-soft); }
+.password-toggle svg { width: 18px; height: 18px; }
+.password-toggle .eye-closed, .password-toggle[aria-pressed="true"] .eye-open { display: none; }
+.password-toggle[aria-pressed="true"] .eye-closed { display: block; }
+.login-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: #8a5a00;
+  font-size: 11px;
+  font-weight: 650;
+}
+.login-hint::before { content: "\21EA"; font-size: 13px; }
+.login-feedback.is-success { border-color: #bfe5d1; color: #136c45; background: #effaf4; }
+.login-form, .login-guest-options { animation: itemRise .35s var(--ease-out) both; }

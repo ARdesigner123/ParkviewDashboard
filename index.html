@@ -306,29 +306,77 @@
         </div>
         <p class="login-eyebrow">WELCOME TO MQUEST</p>
         <h2 id="loginTitle">Sign in to your workspace</h2>
-        <p class="login-intro">Enter your MQuest account details to continue to your project dashboard.</p>
+        <p class="login-intro" id="loginIntro">Enter your MQuest account details to continue to your project dashboard.</p>
         <form class="login-form" id="loginForm">
           <label for="loginUsername">Username</label>
           <div class="login-input-wrap">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
             <input id="loginUsername" name="username" type="email" placeholder="name@company.com" autocomplete="username" required>
           </div>
-          <label for="loginPassword">Password</label>
-          <div class="login-input-wrap">
+          <div class="login-label-row">
+            <label for="loginPassword">Password</label>
+            <button class="login-link" id="forgotPasswordButton" type="button">Forgot password?</button>
+          </div>
+          <div class="login-input-wrap has-toggle">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg>
             <input id="loginPassword" name="password" type="password" placeholder="Enter your password" autocomplete="current-password" required>
+            <button class="password-toggle" type="button" data-password-toggle="loginPassword" aria-label="Show password" aria-pressed="false">
+              <svg class="eye-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg class="eye-closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+            </button>
           </div>
+          <p class="login-hint" id="capsLockHint" hidden>Caps Lock is on</p>
           <p class="login-feedback" id="loginFeedback" role="alert" aria-live="polite" hidden></p>
           <button class="login-submit" id="loginSubmit" type="submit">
             <span id="loginSubmitLabel">Login</span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
           </button>
         </form>
-        <div class="login-separator"><span>OR</span></div>
-        <button class="continue-guest" id="continueAsGuest" type="button">
-          Continue as a Guest
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
-        </button>
+        <form class="login-form" id="resetRequestForm" hidden novalidate>
+          <label for="resetEmail">Email</label>
+          <div class="login-input-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+            <input id="resetEmail" name="email" type="email" placeholder="name@company.com" autocomplete="username" required>
+          </div>
+          <p class="login-feedback" id="resetRequestFeedback" role="alert" aria-live="polite" hidden></p>
+          <button class="login-submit" id="resetRequestSubmit" type="submit">
+            <span>Send reset link</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+          </button>
+          <button class="login-back" type="button" data-login-back>Back to sign in</button>
+        </form>
+        <form class="login-form" id="newPasswordForm" hidden novalidate>
+          <label for="newPassword">New password</label>
+          <div class="login-input-wrap has-toggle">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg>
+            <input id="newPassword" name="newPassword" type="password" placeholder="At least 8 characters" autocomplete="new-password" minlength="8" required>
+            <button class="password-toggle" type="button" data-password-toggle="newPassword" aria-label="Show password" aria-pressed="false">
+              <svg class="eye-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg class="eye-closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+            </button>
+          </div>
+          <label for="confirmPassword">Confirm new password</label>
+          <div class="login-input-wrap has-toggle">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg>
+            <input id="confirmPassword" name="confirmPassword" type="password" placeholder="Type it again" autocomplete="new-password" minlength="8" required>
+            <button class="password-toggle" type="button" data-password-toggle="confirmPassword" aria-label="Show password" aria-pressed="false">
+              <svg class="eye-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg class="eye-closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+            </button>
+          </div>
+          <p class="login-feedback" id="newPasswordFeedback" role="alert" aria-live="polite" hidden></p>
+          <button class="login-submit" id="newPasswordSubmit" type="submit">
+            <span>Save new password</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+          </button>
+        </form>
+        <div class="login-guest-options" id="loginGuestOptions">
+          <div class="login-separator"><span>OR</span></div>
+          <button class="continue-guest" id="continueAsGuest" type="button">
+            Continue as a Guest
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+          </button>
+        </div>
         <p class="login-help">Need an account? Contact your MQuest workspace administrator.</p>
       </div>
     </section>

@@ -20,8 +20,6 @@
       const markerEditorActions = document.getElementById('markerEditorActions');
       const sidebar = document.querySelector('.app-sidebar');
       const layoutList = document.getElementById('layoutList');
-      const sidebarToggleBtn = document.createElement('button');
-      const sidebarToggle = document.createElement('button');
       const appShell = document.querySelector('.app-shell');
       const loginScreen = document.getElementById('loginScreen');
       const accountMenu = document.getElementById('accountMenu');
@@ -120,7 +118,6 @@
       let movingMarkerId = null;
       let authSession = null;
       let authRefreshTimer = null;
-      let authRefreshInProgress = false;
       let presenceUserId = null;
       let presenceDisplayName = null;
       let presenceRole = null;
@@ -216,7 +213,7 @@
         toastTimer = setTimeout(() => toast.classList.remove('show'), 3200);
       };
 
-      const authRequest = async (path, payload, accessToken) => {
+      const authRequest = async (path, payload, accessToken, method = 'POST') => {
         const headers = {
           apikey: markerCloudConfig.anonKey,
           'Content-Type': 'application/json'
@@ -225,7 +222,7 @@
         let response;
         try {
           response = await fetch(`${authBaseUrl}${path}`, {
-            method: 'POST',
+            method,
             headers,
             body: JSON.stringify(payload)
           });
@@ -256,6 +253,16 @@
         ...(authSession ? { Authorization: `Bearer ${authSession.access_token}` } : {}),
         ...headers
       });
+
+      // Every request to the Supabase database/storage goes through here, so the
+      // signed-in user's token is attached (the database security rules check it)
+      // and is refreshed first if it is about to expire.
+      const supabaseFetch = async (url, options = {}) => {
+        if (authSession && authSession.expires_at - Date.now() < 30000) {
+          await refreshAuthSession();
+        }
+        return fetch(url, { ...options, headers: getSupabaseHeaders(options.headers || {}) });
+      };
 
       const createAuthSession = (result, previousSession) => {
         const user = result.user || (previousSession && previousSession.user);
@@ -328,6 +335,7 @@
         closeAccountPopover();
         loginForm.reset();
         setLoginFeedback('');
+        setLoginMode('signin');
         appShell.hidden = true;
         loginScreen.hidden = false;
         window.requestAnimationFrame(() => loginUsername.focus());
@@ -371,42 +379,6 @@
           console.warn('Unable to save guest ID:', e);
         }
 
-        // Register the new guest in the users table so we can track all guests
-        // (and show a stable anonymous number across devices/browsers).
-        const displayName = `Anonymous ${guestNum}`;
-        try {
-          const existing = await fetch(`${usersRestUrl()}?user_id=eq.${encodeURIComponent(guestId)}`, {
-            headers: { apikey: markerCloudConfig.anonKey },
-          });
-          if (existing.ok) {
-            const rows = await existing.json().catch(() => []);
-            if (Array.isArray(rows) && rows.length > 0) return guestId;
-          }
-        } catch (e) {
-          console.warn('Unable to check for existing guest user:', e);
-        }
-
-        const payload = {
-          user_id: guestId,
-          email: null,
-          display_name: displayName,
-          role: 'guest',
-          last_seen_at: new Date().toISOString(),
-        };
-        try {
-          await fetch(usersRestUrl(), {
-            method: 'POST',
-            headers: {
-              apikey: markerCloudConfig.anonKey,
-              'Content-Type': 'application/json',
-              Prefer: 'return=minimal',
-            },
-            body: JSON.stringify(payload),
-          });
-        } catch (error) {
-          console.error('Unable to register guest user:', error);
-        }
-
         return guestId;
       };
 
@@ -436,10 +408,9 @@
           layout_name: layoutName,
           updated_at: new Date().toISOString(),
         };
-        console.log('[Presence] Upserting:', userId, displayName, role, projectName, layoutName);
         try {
           // Try update first with return=representation to check if any row was affected
-          const updateResponse = await fetch(
+          const updateResponse = await supabaseFetch(
             `${presenceRestUrl()}?user_id=eq.${encodeURIComponent(userId)}`,
             {
               method: 'PATCH',
@@ -453,12 +424,10 @@
           );
           const updateData = await updateResponse.json().catch(() => []);
           if (Array.isArray(updateData) && updateData.length > 0) {
-            console.log('[Presence] Updated existing row:', userId);
             return;
           }
-          console.log('[Presence] PATCH affected 0 rows, inserting new row');
           // If update affected no rows (user doesn't exist yet), insert
-          const insertResponse = await fetch(presenceRestUrl(), {
+          const insertResponse = await supabaseFetch(presenceRestUrl(), {
             method: 'POST',
             headers: {
               apikey: markerCloudConfig.anonKey,
@@ -477,7 +446,7 @@
 
       const deletePresence = async (userId) => {
         try {
-          await fetch(`${presenceRestUrl()}?user_id=eq.${encodeURIComponent(userId)}`, {
+          await supabaseFetch(`${presenceRestUrl()}?user_id=eq.${encodeURIComponent(userId)}`, {
             method: 'DELETE',
             headers: { apikey: markerCloudConfig.anonKey },
           });
@@ -491,7 +460,7 @@
           const cutoff = new Date(Date.now() - presenceStaleMs).toISOString();
           const projectId = activeProject?.id || defaultProjectId;
           const layoutId = layouts[selectedIndex]?.id || 'layout-1';
-          const response = await fetch(
+          const response = await supabaseFetch(
             `${presenceRestUrl()}?project_id=eq.${encodeURIComponent(projectId)}&layout_id=eq.${encodeURIComponent(layoutId)}&updated_at=gt.${encodeURIComponent(cutoff)}&order=updated_at.desc`,
             { headers: { apikey: markerCloudConfig.anonKey } }
           );
@@ -501,7 +470,6 @@
           }
           const rows = await response.json();
           const data = Array.isArray(rows) ? rows : [];
-          console.log('[Presence] Fetched online users:', data.length, data.map((r) => r.display_name));
           return data;
         } catch (error) {
           console.error('Unable to fetch presence:', error);
@@ -521,7 +489,7 @@
           last_seen_at: new Date().toISOString(),
         };
         try {
-          const updateResponse = await fetch(
+          const updateResponse = await supabaseFetch(
             `${usersRestUrl()}?user_id=eq.${encodeURIComponent(userId)}`,
             {
               method: 'PATCH',
@@ -535,7 +503,7 @@
           );
           const updateData = await updateResponse.json().catch(() => []);
           if (Array.isArray(updateData) && updateData.length > 0) return;
-          const insertResponse = await fetch(usersRestUrl(), {
+          const insertResponse = await supabaseFetch(usersRestUrl(), {
             method: 'POST',
             headers: {
               apikey: markerCloudConfig.anonKey,
@@ -554,7 +522,7 @@
 
       const fetchAllUsers = async () => {
         try {
-          const response = await fetch(usersRestUrl(), {
+          const response = await supabaseFetch(usersRestUrl(), {
             headers: { apikey: markerCloudConfig.anonKey },
           });
           if (!response.ok) return [];
@@ -675,7 +643,7 @@
         return `
           <li class="live-user-item${isCurrentUser ? ' current-user' : ''}${!isOnline ? ' offline-user' : ''}" style="--user-color: ${color}">
             <div class="live-user-avatar" style="background: ${color}" aria-hidden="true">
-              ${(user.display_name || 'U').charAt(0).toUpperCase()}
+              ${escapeHtml((user.display_name || 'U').charAt(0).toUpperCase())}
             </div>
             <div class="live-user-info">
               <div class="live-user-name">${statusDot} ${escapeHtml(user.display_name || 'User')}${currentBadge}</div>
@@ -691,7 +659,7 @@
         return `
           <li class="live-user-item guest-user" style="--user-color: ${color}">
             <div class="live-user-avatar" style="background: ${color}" aria-hidden="true">
-              ${(user.display_name || 'A').charAt(0).toUpperCase()}
+              ${escapeHtml((user.display_name || 'A').charAt(0).toUpperCase())}
             </div>
             <div class="live-user-info">
               <div class="live-user-name">${escapeHtml(user.display_name || 'Anonymous')}</div>
@@ -706,14 +674,6 @@
         const presenceRows = await fetchPresence();
         const allUsers = await fetchAllUsers();
         const currentUserId = presenceUserId;
-
-        console.log('[Presence] refreshPresenceUI:', {
-          presenceRows: presenceRows.length,
-          presenceRowsNames: presenceRows.map((r) => r.display_name),
-          allUsers: allUsers.length,
-          allUsersNames: allUsers.map((u) => u.display_name),
-          currentUserId: currentUserId,
-        });
 
         // Build a map of online users by user_id
         const onlineById = new Map();
@@ -890,9 +850,16 @@
         }
       };
 
-      const refreshAuthSession = async () => {
-        if (!authSession || authRefreshInProgress) return;
-        authRefreshInProgress = true;
+      let authRefreshPromise = null;
+      const refreshAuthSession = () => {
+        if (!authSession) return Promise.resolve();
+        if (!authRefreshPromise) {
+          authRefreshPromise = runAuthRefresh().finally(() => { authRefreshPromise = null; });
+        }
+        return authRefreshPromise;
+      };
+
+      const runAuthRefresh = async () => {
         const previousSession = authSession;
         try {
           const result = await authRequest(
@@ -913,8 +880,6 @@
               authRefreshTimer = setTimeout(refreshAuthSession, retryDelay);
             }
           }
-        } finally {
-          authRefreshInProgress = false;
         }
       };
 
@@ -1123,7 +1088,7 @@
 
       const uploadCloudMarkerPhoto = async (photoId, file) => {
         const path = getMarkerPhotoPath(photoId);
-        const response = await fetch(
+        const response = await supabaseFetch(
           `${getMarkerCloudRestUrl().replace('/rest/v1', '')}/storage/v1/object/parkview-marker-photos/${encodeStoragePath(path)}`,
           {
             method: 'POST',
@@ -1141,7 +1106,7 @@
 
       const deleteCloudMarkerPhoto = async (photo) => {
         if (!photo.path) return;
-        const response = await fetch(
+        const response = await supabaseFetch(
           `${getMarkerCloudRestUrl().replace('/rest/v1', '')}/storage/v1/object/parkview-marker-photos/${encodeStoragePath(photo.path)}`,
           {
             method: 'DELETE',
@@ -1199,7 +1164,7 @@
         if (!markerCloudConfig || !markerCloudConfig.restUrl || !markerCloudConfig.anonKey) {
           throw new Error('Supabase marker sync is not configured.');
         }
-        const response = await fetch(
+        const response = await supabaseFetch(
           `${getMarkerCloudRestUrl()}/parkview_markers?site_id=eq.${encodeURIComponent(markerCloudSiteId)}&select=site_id,layout_id,marker_id,marker`,
           {
             headers: { apikey: markerCloudConfig.anonKey }
@@ -1216,7 +1181,7 @@
           site_id: `eq.${markerCloudSiteId}`,
           select: 'site_id'
         });
-        const response = await fetch(`${getMarkerCloudRestUrl()}/parkview_marker_sites?${query}`, {
+        const response = await supabaseFetch(`${getMarkerCloudRestUrl()}/parkview_marker_sites?${query}`, {
           headers: { apikey: markerCloudConfig.anonKey }
         });
         if (!response.ok) throw new Error(`Supabase marker sync status failed (${response.status}).`);
@@ -1226,7 +1191,7 @@
       };
 
       const markCloudSiteInitialized = async () => {
-        const response = await fetch(`${getMarkerCloudRestUrl()}/parkview_marker_sites?on_conflict=site_id`, {
+        const response = await supabaseFetch(`${getMarkerCloudRestUrl()}/parkview_marker_sites?on_conflict=site_id`, {
           method: 'POST',
           headers: {
             apikey: markerCloudConfig.anonKey,
@@ -1239,7 +1204,7 @@
       };
 
       const fetchLegacyCloudMarkers = async () => {
-        const response = await fetch(
+        const response = await supabaseFetch(
           `${getMarkerCloudRestUrl()}/parkview_marker_state?project_id=eq.parkview-dashboard&select=markers`,
           { headers: { apikey: markerCloudConfig.anonKey } }
         );
@@ -1254,7 +1219,7 @@
       };
 
       const upsertCloudMarker = async (row) => {
-        const response = await fetch(
+        const response = await supabaseFetch(
           `${getMarkerCloudRestUrl()}/parkview_markers?on_conflict=site_id,layout_id,marker_id`,
           {
             method: 'POST',
@@ -1275,7 +1240,7 @@
           layout_id: `eq.${layoutId}`,
           marker_id: `eq.${markerId}`
         });
-        const response = await fetch(`${getMarkerCloudRestUrl()}/parkview_markers?${query}`, {
+        const response = await supabaseFetch(`${getMarkerCloudRestUrl()}/parkview_markers?${query}`, {
           method: 'DELETE',
           headers: { apikey: markerCloudConfig.anonKey }
         });
@@ -1288,7 +1253,7 @@
           layout_id: `eq.${layoutId}`,
           select: 'marker_id,marker'
         });
-        const response = await fetch(`${getMarkerCloudRestUrl()}/parkview_markers?${query}`, {
+        const response = await supabaseFetch(`${getMarkerCloudRestUrl()}/parkview_markers?${query}`, {
           headers: { apikey: markerCloudConfig.anonKey }
         });
         if (!response.ok) throw new Error(`Could not load markers for layout ${layoutId} (${response.status}).`);
@@ -2145,7 +2110,7 @@ const renderMarkers = () => {
 
       const uploadCloudLayoutImage = async (layoutId, file) => {
         const path = getLayoutStoragePath(layoutId);
-        const response = await fetch(
+        const response = await supabaseFetch(
           `${getMarkerCloudRestUrl().replace('/rest/v1', '')}/storage/v1/object/parkview-layouts/${encodeStoragePath(path)}`,
           {
             method: 'POST',
@@ -2165,7 +2130,7 @@ const renderMarkers = () => {
         let imagePath = layout.imagePath || null;
         if (imageFile) imagePath = await uploadCloudLayoutImage(layout.id, imageFile);
         const updatedAt = new Date().toISOString();
-        const response = await fetch(
+        const response = await supabaseFetch(
           `${getMarkerCloudRestUrl()}/parkview_layouts?on_conflict=site_id,layout_id`,
           {
             method: 'POST',
@@ -2192,7 +2157,7 @@ const renderMarkers = () => {
 
       const deleteCloudLayoutImage = async (path) => {
         if (!path) return;
-        const response = await fetch(
+        const response = await supabaseFetch(
           `${getMarkerCloudRestUrl().replace('/rest/v1', '')}/storage/v1/object/parkview-layouts/${encodeStoragePath(path)}`,
           {
             method: 'DELETE',
@@ -2205,7 +2170,7 @@ const renderMarkers = () => {
       };
 
       const fetchCloudLayouts = async () => {
-        const response = await fetch(
+        const response = await supabaseFetch(
           `${getMarkerCloudRestUrl()}/parkview_layouts?site_id=eq.${encodeURIComponent(markerCloudSiteId)}&select=site_id,layout_id,name,is_uploaded,deleted,image_path,updated_at`,
           { headers: { apikey: markerCloudConfig.anonKey } }
         );
@@ -2216,7 +2181,7 @@ const renderMarkers = () => {
       };
 
       const saveCloudProject = async (project) => {
-        const response = await fetch(`${getMarkerCloudRestUrl()}/parkview_projects?on_conflict=site_id,project_id`, {
+        const response = await supabaseFetch(`${getMarkerCloudRestUrl()}/parkview_projects?on_conflict=site_id,project_id`, {
           method: 'POST',
           headers: {
             apikey: markerCloudConfig.anonKey,
@@ -2278,7 +2243,7 @@ const renderMarkers = () => {
             site_id: `eq.${markerCloudSiteId}`,
             layout_id: `eq.${layout.id}`
           });
-          const markerResponse = await fetch(`${getMarkerCloudRestUrl()}/parkview_markers?${markerQuery}`, {
+          const markerResponse = await supabaseFetch(`${getMarkerCloudRestUrl()}/parkview_markers?${markerQuery}`, {
             method: 'DELETE',
             headers: { apikey: markerCloudConfig.anonKey }
           });
@@ -2340,7 +2305,7 @@ const renderMarkers = () => {
       };
 
       const fetchCloudProjects = async () => {
-        const response = await fetch(
+        const response = await supabaseFetch(
           `${getMarkerCloudRestUrl()}/parkview_projects?site_id=eq.${encodeURIComponent(markerCloudSiteId)}&select=project_id,name,deleted,updated_at`,
           { headers: { apikey: markerCloudConfig.anonKey } }
         );
@@ -2796,7 +2761,7 @@ const renderMarkers = () => {
             site_id: `eq.${markerCloudSiteId}`,
             layout_id: `eq.${layout.id}`
           });
-          const markerResponse = await fetch(`${getMarkerCloudRestUrl()}/parkview_markers?${query}`, {
+          const markerResponse = await supabaseFetch(`${getMarkerCloudRestUrl()}/parkview_markers?${query}`, {
             method: 'DELETE',
             headers: { apikey: markerCloudConfig.anonKey }
           });
@@ -3181,9 +3146,239 @@ const renderMarkers = () => {
         if (shouldOpen) refreshPresenceUI();
       });
 
+      // ---- Sign-in screen: modes, password reset, lockout ---------------------
+      const loginTitle = document.getElementById('loginTitle');
+      const loginIntro = document.getElementById('loginIntro');
+      const loginGuestOptions = document.getElementById('loginGuestOptions');
+      const resetRequestForm = document.getElementById('resetRequestForm');
+      const resetEmail = document.getElementById('resetEmail');
+      const resetRequestFeedback = document.getElementById('resetRequestFeedback');
+      const resetRequestSubmit = document.getElementById('resetRequestSubmit');
+      const newPasswordForm = document.getElementById('newPasswordForm');
+      const newPassword = document.getElementById('newPassword');
+      const confirmPassword = document.getElementById('confirmPassword');
+      const newPasswordFeedback = document.getElementById('newPasswordFeedback');
+      const newPasswordSubmit = document.getElementById('newPasswordSubmit');
+      const capsLockHint = document.getElementById('capsLockHint');
+      let recoverySession = null;
+
+      const loginModes = {
+        signin: {
+          title: 'Sign in to your workspace',
+          intro: 'Enter your MQuest account details to continue to your project dashboard.',
+          form: loginForm
+        },
+        reset: {
+          title: 'Reset your password',
+          intro: 'Enter the email for your MQuest account and we will send you a link to choose a new password.',
+          form: resetRequestForm
+        },
+        'new-password': {
+          title: 'Choose a new password',
+          intro: 'Use at least 8 characters. You will be signed in once it is saved.',
+          form: newPasswordForm
+        }
+      };
+
+      const setFeedback = (element, message, kind = 'error') => {
+        element.textContent = message;
+        element.hidden = !message;
+        element.classList.toggle('is-success', kind === 'success');
+      };
+
+      function setLoginMode(mode) {
+        const config = loginModes[mode] || loginModes.signin;
+        Object.values(loginModes).forEach(({ form }) => { form.hidden = form !== config.form; });
+        loginTitle.textContent = config.title;
+        loginIntro.textContent = config.intro;
+        loginGuestOptions.hidden = mode !== 'signin';
+        setLoginFeedback('');
+        setFeedback(resetRequestFeedback, '');
+        setFeedback(newPasswordFeedback, '');
+        capsLockHint.hidden = true;
+        document.querySelectorAll('[data-password-toggle]').forEach((button) => {
+          document.getElementById(button.dataset.passwordToggle).type = 'password';
+          button.setAttribute('aria-pressed', 'false');
+          button.setAttribute('aria-label', 'Show password');
+        });
+        const focusTarget = mode === 'reset' ? resetEmail : mode === 'new-password' ? newPassword : loginUsername;
+        window.requestAnimationFrame(() => focusTarget.focus());
+      }
+
+      const friendlyAuthError = (error) => {
+        const message = String((error && error.message) || '');
+        if (error && error.status === 429) return 'Too many attempts. Please wait a minute and try again.';
+        if (/invalid login credentials/i.test(message)) return 'Incorrect email or password.';
+        if (/email not confirmed/i.test(message)) return 'This account has not been confirmed yet. Please contact your workspace administrator.';
+        if (/same.*password|different from the old/i.test(message)) return 'Please choose a password you have not used before.';
+        if (/weak|at least/i.test(message)) return message;
+        return message || 'Something went wrong. Please try again.';
+      };
+
+      // Show / hide password buttons
+      document.querySelectorAll('[data-password-toggle]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const input = document.getElementById(button.dataset.passwordToggle);
+          const show = input.type === 'password';
+          input.type = show ? 'text' : 'password';
+          button.setAttribute('aria-pressed', String(show));
+          button.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+          input.focus();
+        });
+      });
+
+      const updateCapsLockHint = (event) => {
+        if (typeof event.getModifierState !== 'function') return;
+        capsLockHint.hidden = !event.getModifierState('CapsLock');
+      };
+      loginPassword.addEventListener('keydown', updateCapsLockHint);
+      loginPassword.addEventListener('keyup', updateCapsLockHint);
+      loginPassword.addEventListener('blur', () => { capsLockHint.hidden = true; });
+
+      // Brief lockout after repeated failed sign-ins (Supabase also rate-limits on the server).
+      const loginLockKey = `mquest-parkview-login-lock:${markerCloudSiteId}`;
+      const maxLoginAttempts = 5;
+      const loginLockMs = 60000;
+      let loginLockTimer = null;
+      const readLoginLock = () => {
+        try {
+          const value = JSON.parse(localStorage.getItem(loginLockKey) || '{}');
+          return { failures: Number(value.failures) || 0, until: Number(value.until) || 0 };
+        } catch (error) {
+          return { failures: 0, until: 0 };
+        }
+      };
+      const writeLoginLock = (value) => {
+        try { localStorage.setItem(loginLockKey, JSON.stringify(value)); } catch (error) { /* private mode */ }
+      };
+      const applyLoginLock = () => {
+        clearInterval(loginLockTimer);
+        const tick = () => {
+          const remaining = readLoginLock().until - Date.now();
+          if (remaining <= 0) {
+            clearInterval(loginLockTimer);
+            loginSubmit.disabled = false;
+            if (loginFeedback.dataset.lock === 'true') setLoginFeedback('');
+            delete loginFeedback.dataset.lock;
+            return;
+          }
+          loginSubmit.disabled = true;
+          loginFeedback.dataset.lock = 'true';
+          setLoginFeedback(`Too many incorrect attempts. Try again in ${Math.ceil(remaining / 1000)}s.`);
+        };
+        tick();
+        if (readLoginLock().until > Date.now()) loginLockTimer = setInterval(tick, 1000);
+      };
+      const recordLoginFailure = () => {
+        const lock = readLoginLock();
+        const failures = lock.failures + 1;
+        if (failures >= maxLoginAttempts) {
+          writeLoginLock({ failures: 0, until: Date.now() + loginLockMs });
+          return true;
+        }
+        writeLoginLock({ failures, until: 0 });
+        return false;
+      };
+
+      document.getElementById('forgotPasswordButton').addEventListener('click', () => {
+        const typedEmail = loginUsername.value.trim();
+        setLoginMode('reset');
+        if (typedEmail) resetEmail.value = typedEmail;
+      });
+      document.querySelectorAll('[data-login-back]').forEach((button) => {
+        button.addEventListener('click', () => setLoginMode('signin'));
+      });
+
+      resetRequestForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const email = resetEmail.value.trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          setFeedback(resetRequestFeedback, 'Enter a valid email address.');
+          return;
+        }
+        resetRequestSubmit.disabled = true;
+        setFeedback(resetRequestFeedback, '');
+        try {
+          const redirectTo = `${window.location.origin}${window.location.pathname}`;
+          await authRequest(`/auth/v1/recover?redirect_to=${encodeURIComponent(redirectTo)}`, { email });
+          setFeedback(resetRequestFeedback,
+            'If an account exists for that email, a reset link is on its way. Check your inbox (and spam folder).', 'success');
+        } catch (error) {
+          console.error('Unable to request a password reset:', error);
+          setFeedback(resetRequestFeedback, friendlyAuthError(error));
+        } finally {
+          resetRequestSubmit.disabled = false;
+        }
+      });
+
+      newPasswordForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (!recoverySession) {
+          setFeedback(newPasswordFeedback, 'This reset link is no longer valid. Request a new one from the sign-in screen.');
+          return;
+        }
+        if (newPassword.value.length < 8) {
+          setFeedback(newPasswordFeedback, 'Use at least 8 characters.');
+          return;
+        }
+        if (newPassword.value !== confirmPassword.value) {
+          setFeedback(newPasswordFeedback, 'The two passwords do not match.');
+          return;
+        }
+        newPasswordSubmit.disabled = true;
+        setFeedback(newPasswordFeedback, '');
+        try {
+          const user = await authRequest('/auth/v1/user', { password: newPassword.value },
+            recoverySession.access_token, 'PUT');
+          const session = createAuthSession({ ...recoverySession, user });
+          recoverySession = null;
+          newPasswordForm.reset();
+          setAuthSession(session);
+          showProjectWorkspace();
+          announce('Password updated. You are now signed in.');
+        } catch (error) {
+          console.error('Unable to set a new password:', error);
+          setFeedback(newPasswordFeedback, friendlyAuthError(error));
+        } finally {
+          newPasswordSubmit.disabled = false;
+        }
+      });
+
+      // A password-reset email link returns here with the session in the URL hash.
+      const handleAuthRedirect = () => {
+        const hash = window.location.hash.replace(/^#/, '');
+        if (!hash) return;
+        const params = new URLSearchParams(hash);
+        const type = params.get('type');
+        const error = params.get('error_description') || params.get('error');
+        if (!type && !error) return;
+        // Remove the tokens from the address bar straight away.
+        window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+        if (error) {
+          showLoginScreen();
+          setLoginMode('reset');
+          setFeedback(resetRequestFeedback, /expired|invalid/i.test(error)
+            ? 'That reset link has expired or was already used. Request a new one below.'
+            : error.replace(/\+/g, ' '));
+          return;
+        }
+        if (type !== 'recovery') return;
+        const accessToken = params.get('access_token');
+        const refreshToken = params.get('refresh_token');
+        const expiresIn = Number(params.get('expires_in'));
+        if (!accessToken || !refreshToken || !Number.isFinite(expiresIn)) return;
+        recoverySession = { access_token: accessToken, refresh_token: refreshToken, expires_in: expiresIn };
+        showLoginScreen();
+        setLoginMode('new-password');
+      };
+
       loginForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         if (loginSubmit.disabled) return;
+        if (readLoginLock().until > Date.now()) {
+          applyLoginLock();
+          return;
+        }
         setLoginFeedback('');
         loginSubmit.disabled = true;
         loginSubmitLabel.textContent = 'Signing in...';
@@ -3193,19 +3388,24 @@ const renderMarkers = () => {
             password: loginPassword.value
           });
           const session = createAuthSession(result);
+          writeLoginLock({ failures: 0, until: 0 });
           const sessionSaved = setAuthSession(session);
           loginForm.reset();
           setLoginFeedback('');
           showProjectWorkspace();
           if (sessionSaved) announce(`Signed in as ${displayNameFromEmail(session.user.email) || 'User'}.`);
         } catch (error) {
-          setLoginFeedback(error.message || 'Sign in failed. Please try again.');
+          const locked = error.status === 400 && recordLoginFailure();
+          setLoginFeedback(friendlyAuthError(error));
           loginPassword.value = '';
           loginPassword.focus();
-        } finally {
           loginSubmit.disabled = false;
           loginSubmitLabel.textContent = 'Login';
+          if (locked) applyLoginLock();
+          return;
         }
+        loginSubmit.disabled = false;
+        loginSubmitLabel.textContent = 'Login';
       });
       document.getElementById('continueAsGuest').addEventListener('click', () => {
         loginForm.reset();
@@ -3254,6 +3454,8 @@ const renderMarkers = () => {
       image.addEventListener('load', renderMarkers);
       new ResizeObserver(renderMarkers).observe(stage);
       restoreAuthSession();
+      handleAuthRedirect();
+      if (readLoginLock().until > Date.now()) applyLoginLock();
       restoreMarkers();
       updateProjectControls();
       selectLayout(0);
@@ -3297,202 +3499,6 @@ const renderMarkers = () => {
         }
       });
       window.addEventListener('focus', () => {
-/* ========================================
-   SIDEBAR TOGGLE
-   ========================================= */
-
-const toggleSidebar = () => {
-  const isCollapsed = document.body.classList.toggle('collapsed');
-  const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
-  if (sidebarToggleBtn) {
-    sidebarToggleBtn.setAttribute('aria-pressed', String(!isCollapsed));
-  }
-};
-
-/* ========================================
-/* ========================================
-   RENDER LAYOUT LIST
-   ========================================= */
-
-const renderLayoutList = () => {
-  const layoutList = document.getElementById('layoutList');
-  if (!layoutList) return;
-  
-  layoutList.replaceChildren();
-  
-  const activeProject = projects.find((project) => !project.deleted) || projects[0];
-  const allLayouts = activeProject?.layouts || [];
-  
-  // Group layouts by project
-  const projectLayouts = new Map();
-  
-  // Add built-in layouts under the default project
-  const defaultProject = projects.find((p) => p.id === defaultProjectId);
-  if (defaultProject && defaultProject.layouts) {
-    projectLayouts.set(defaultProject.id, {
-      name: defaultProject.name,
-      layouts: defaultProject.layouts.map((layout) => ({
-        id: layout.id,
-        name: layout.name,
-        src: layout.src,
-        type: layout.type,
-        uploaded: layout.uploaded
-      }))
-    });
-  }
-  
-  // Add saved projects with their layouts
-  projects.forEach((project) => {
-    if (project.deleted) return;
-    if (project.id === defaultProjectId) return;
-/* ========================================
-   SELECT LAYOUT
-   ========================================= */
-
-const selectLayout = (layoutId) => {
-  const layout = layouts.find((l) => l.id === layoutId);
-  if (!layout) return;
-  
-  selectedIndex = layouts.findIndex((l) => l.id === layoutId);
-  
-  // Update the viewer image
-  const planImage = document.getElementById('planImage');
-  if (planImage) {
-    planImage.src = layout.src;
-    planImage.alt = layout.name;
-    document.getElementById('sheetTitle').textContent = layout.name;
-    document.getElementById('sheetType').textContent = layout.type || 'Project drawing';
-    document.getElementById('sheetCounter').textContent = `${selectedIndex + 1} / ${layouts.length}`;
-  }
-  
-  // Update the marker layer transform
-  markerLayer.style.transform = `translate(var(--pan-x, 0px), var(--pan-y, 0px)) scale(var(--zoom, 1))`;
-  
-  // Remove existing markers and re-create for new layout
-  markerLayer.replaceChildren();
-  markersByLayout.clear();
-  sessionMarkerPhotos.clear();
-  
-  // Fetch and create markers for this layout
-  createMarkersForLayout(layoutId);
-  
-  // Update presence
-  refreshPresenceUI();
-};
-    projectLayouts.set(project.id, {
-      name: project.name,
-      layouts: (project.layouts || []).map((layout) => ({
-        id: layout.id,
-        name: layout.name,
-        src: layout.src,
-        type: layout.type,
-        uploaded: layout.uploaded
-      }))
-    });
-  });
-  
-  // Render each project with its layouts
-  projectLayouts.forEach((projectData, projectId) => {
-    const projectItem = document.createElement('div');
-    projectItem.className = 'layout-item has-children';
-    projectItem.setAttribute('role', 'button');
-    projectItem.setAttribute('tabindex', '0');
-    projectItem.setAttribute('aria-expanded', 'false');
-    projectItem.setAttribute('aria-label', `${projectData.name} layouts`);
-    
-    projectItem.innerHTML = `
-      <div class="layout-item-title">${projectData.name}</div>
-      <button class="toggle-children" aria-label="Show ${projectData.name} layouts" aria-pressed="false">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><path d="M13 12h5M12 5l-7 7 7 7"/><path d="M5 12h14M12 15l7-7 7 7"/></svg>
-      </button>
-    `;
-    
-    // Project click handler
-    projectItem.addEventListener('click', (e) => {
-      if (e.target.classList.contains('toggle-children') || e.target.parentElement.classList.contains('toggle-children')) {
-        const isExpanded = projectItem.getAttribute('aria-expanded') === 'true';
-        projectItem.setAttribute('aria-expanded', !isExpanded);
-        const subList = projectItem.querySelector('.sub-layout-list');
-        if (subList) {
-          subList.hidden = isExpanded;
-        }
-        return;
-      }
-      
-      // Navigate to layout when project header is clicked
-      const layoutItem = e.target.closest('.layout-item:not(.has-children)');
-      if (layoutItem) {
-        const layoutId = layoutItem.dataset.layoutId;
-        if (layoutId) {
-          selectLayout(layoutId);
-        }
-      }
-    });
-    
-    // Keyboard accessibility
-    projectItem.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        projectItem.click();
-      }
-    });
-    
-    // Create sub-layout list
-    const subLayoutList = document.createElement('div');
-    subLayoutList.className = 'sub-layout-list';
-    subLayoutList.id = `sub-layout-${projectId}`;
-    subLayoutList.hidden = true;
-    
-    projectData.layouts.forEach((layout, layoutIndex) => {
-      const layoutItem = document.createElement('div');
-      layoutItem.className = 'layout-item';
-      layoutItem.dataset.layoutId = layout.id;
-      layoutItem.innerHTML = `
-        <svg class="layout-thumb" aria-hidden="true" viewBox="0 0 66 42"><image href="${layout.src}" width="66" height="42" preserveAspectRatio="xMidYMid slice"/></svg>
-        <div class="layout-item-title">${layout.name}</div>
-        <div class="layout-item-meta">${layout.type}</div>
-      `;
-      
-      // Add click handler for layout item
-      layoutItem.addEventListener('click', () => {
-        selectLayout(layout.id);
-      });
-      
-      // Add keyboard accessibility
-      layoutItem.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          layoutItem.click();
-        }
-      });
-      
-      subLayoutList.appendChild(layoutItem);
-    });
-    
-    projectItem.appendChild(subLayoutList);
-    layoutList.appendChild(projectItem);
-  });
-  
-  // Update layout count
-  const totalLayouts = Array.from(layoutList.querySelectorAll('.layout-item:not(.has-children)')).length;
-  document.getElementById('layoutCount').textContent = `${totalLayouts} sheets`;
-};
-  /* ========================================
-   SIDEBAR TOGGLE BUTTON EVENT LISTENER
-   ========================================= */
-
-const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
-if (sidebarToggleBtn) {
-  sidebarToggleBtn.addEventListener('click', toggleSidebar);
-}
-
-// Initialize layout list on page load
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', renderLayoutList);
-} else {
-  renderLayoutList();
-}
         markerSyncPromise = refreshSharedMarkers();
         const projectSync = syncProjectsFromCloud();
         layoutSyncPromise = projectSync.then(() => syncLayoutsFromCloud()).catch((error) => {
