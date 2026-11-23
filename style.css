@@ -3958,3 +3958,9 @@ body[data-workspace-role="editor"] .app-sidebar .layout-row:hover .layout-item-c
 @media (max-width: 359px) {
   .topbar-clock { display: none; }
 }
+
+.guest-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.panel-button.danger { min-height: 34px; border-color: #f6c9cb; color: var(--alert-dark); background: #fff; font-size: 11.5px; }
+.panel-button.danger:hover { border-color: var(--alert); color: #fff; background: var(--alert); }
+.panel-button:disabled { opacity: .6; cursor: wait; transform: none; }
+body[data-theme="dark"] .panel-button.danger { border-color: #5a2328; color: #ff9a9d; background: #2a1418; }

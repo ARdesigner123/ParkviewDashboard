@@ -373,102 +373,8 @@ delete from public.parkview_users where role = 'guest' and guest_number is null;
 revoke insert, update on table public.parkview_users from anon, authenticated;
 revoke insert, update on table public.parkview_presence from anon, authenticated;
 
--- Called every ~15 s while a page is open and visible.
--- Adds the real time since the previous heartbeat (max 45 s) to the total.
-create or replace function public.parkview_heartbeat(
-  p_client_id text,
-  p_project_id text,
-  p_project_name text,
-  p_layout_id text,
-  p_layout_name text
-)
-returns json
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-  v_uid uuid := auth.uid();
-  v_user_id text;
-  v_role text;
-  v_email text;
-  v_name text;
-  v_row public.parkview_users;
-begin
-  if v_uid is not null then
-    v_user_id := v_uid::text;
-    v_role := public.parkview_effective_role();
-    v_email := auth.jwt() ->> 'email';
-    v_name := coalesce(nullif(split_part(coalesce(v_email, ''), '@', 1), ''), 'User');
-  else
-    if p_client_id is null or p_client_id !~ '^guest-[A-Za-z0-9-]{8,64}$' then
-      raise exception 'invalid guest id';
-    end if;
-    v_user_id := p_client_id;
-    v_role := 'guest';
-    v_email := null;
-    v_name := null;
-  end if;
-
-  select * into v_row from public.parkview_users where user_id = v_user_id for update;
-
-  if not found then
-    insert into public.parkview_users (user_id, email, display_name, role, guest_number,
-                                       first_seen_at, last_seen_at, total_active_seconds, visit_count)
-    values (
-      v_user_id, v_email,
-      coalesce(v_name, 'Guest'),
-      v_role,
-      case when v_role = 'guest' then nextval('public.parkview_guest_number_seq') end,
-      now(), now(), 0, 1
-    )
-    returning * into v_row;
-    if v_role = 'guest' then
-      update public.parkview_users set display_name = 'Guest #' || v_row.guest_number
-      where user_id = v_user_id returning * into v_row;
-    end if;
-  else
-    update public.parkview_users set
-      total_active_seconds = total_active_seconds + case
-        when now() - last_seen_at <= interval '45 seconds'
-          then greatest(0, floor(extract(epoch from now() - last_seen_at)))::bigint
-        else 0 end,
-      -- A gap of more than 30 minutes counts as a new visit.
-      visit_count = visit_count + case when now() - last_seen_at > interval '30 minutes' then 1 else 0 end,
-      last_seen_at = now(),
-      email = coalesce(v_email, email),
-      display_name = case when v_role = 'guest'
-                          then 'Guest #' || coalesce(guest_number, 0)
-                          else v_name end,
-      role = v_role
-    where user_id = v_user_id
-    returning * into v_row;
-  end if;
-
-  insert into public.parkview_presence (user_id, display_name, role, project_id, project_name,
-                                        layout_id, layout_name, updated_at)
-  values (v_user_id, v_row.display_name, v_role,
-          left(coalesce(p_project_id, ''), 120), left(coalesce(p_project_name, ''), 120),
-          left(coalesce(p_layout_id, ''), 160), left(coalesce(p_layout_name, ''), 160), now())
-  on conflict (user_id) do update set
-    display_name = excluded.display_name,
-    role = excluded.role,
-    project_id = excluded.project_id,
-    project_name = excluded.project_name,
-    layout_id = excluded.layout_id,
-    layout_name = excluded.layout_name,
-    updated_at = now();
-
-  return json_build_object(
-    'user_id', v_row.user_id,
-    'display_name', v_row.display_name,
-    'total_active_seconds', v_row.total_active_seconds
-  );
-end;
-$$;
-
-revoke all on function public.parkview_heartbeat(text, text, text, text, text) from public;
-grant execute on function public.parkview_heartbeat(text, text, text, text, text) to anon, authenticated;
+-- The heartbeat function (called every ~15 s while a page is open and visible)
+-- is defined further down, in the "Same computer = same guest" section.
 
 
 -- =====================================================================
@@ -559,5 +465,187 @@ create policy "Parkview activity: signed-in users can read"
 drop policy if exists "Parkview activity: editors can record" on public.parkview_activity;
 create policy "Parkview activity: editors can record"
   on public.parkview_activity for insert to authenticated with check (public.parkview_can_edit());
+
+
+
+-- =====================================================================
+-- Same computer = same guest
+-- A guest is normally recognised by a random ID saved in the browser.
+-- That ID is lost in private windows, other browsers, other website
+-- addresses (e.g. Vercel preview links) or after clearing site data.
+-- In that case the guest is matched by a device fingerprint (hash of
+-- hardware traits sent by the browser) plus a hash of their network
+-- address, so the same computer is counted as the same guest.
+-- Only hashes are stored, never the raw traits or IP address.
+-- =====================================================================
+alter table public.parkview_users add column if not exists device_key text;
+alter table public.parkview_users add column if not exists network_key text;
+create index if not exists parkview_users_guest_device
+  on public.parkview_users (device_key, network_key) where role = 'guest';
+
+-- Hash of the caller's IP address (as seen by Supabase), or null.
+create or replace function public.parkview_network_key()
+returns text
+language sql
+stable
+set search_path = ''
+as $$
+  select md5('parkview:' || ip)
+  from (
+    select nullif(trim(coalesce(
+      h ->> 'cf-connecting-ip',
+      split_part(coalesce(h ->> 'x-forwarded-for', ''), ',', 1),
+      h ->> 'x-real-ip'
+    )), '') as ip
+    from (select coalesce(nullif(current_setting('request.headers', true), ''), '{}')::json as h) headers
+  ) addr
+  where ip is not null;
+$$;
+
+-- Older 5-argument version (from a previous update).
+drop function if exists public.parkview_heartbeat(text, text, text, text, text);
+
+create or replace function public.parkview_heartbeat(
+  p_client_id text,
+  p_project_id text,
+  p_project_name text,
+  p_layout_id text,
+  p_layout_name text,
+  p_device_key text default null
+)
+returns json
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_user_id text;
+  v_role text;
+  v_email text;
+  v_name text;
+  v_device text := case when p_device_key ~ '^dev-[a-f0-9]{16,64}$' then p_device_key end;
+  v_network text := public.parkview_network_key();
+  v_match text;
+  v_row public.parkview_users;
+begin
+  if v_uid is not null then
+    v_user_id := v_uid::text;
+    v_role := public.parkview_effective_role();
+    v_email := auth.jwt() ->> 'email';
+    v_name := coalesce(nullif(split_part(coalesce(v_email, ''), '@', 1), ''), 'User');
+    v_device := null;
+  else
+    if p_client_id is null or p_client_id !~ '^guest-[A-Za-z0-9-]{8,64}$' then
+      raise exception 'invalid guest id';
+    end if;
+    v_user_id := p_client_id;
+    v_role := 'guest';
+    v_email := null;
+    v_name := null;
+
+    -- Unknown browser ID? Reuse the guest already seen on this device + network.
+    if v_device is not null
+       and not exists (select 1 from public.parkview_users where user_id = v_user_id) then
+      select user_id into v_match
+      from public.parkview_users
+      where role = 'guest'
+        and device_key = v_device
+        and network_key is not distinct from v_network
+        and last_seen_at > now() - interval '90 days'
+      order by last_seen_at desc
+      limit 1;
+      if v_match is not null then
+        v_user_id := v_match;
+      end if;
+    end if;
+  end if;
+
+  select * into v_row from public.parkview_users where user_id = v_user_id for update;
+
+  if not found then
+    insert into public.parkview_users (user_id, email, display_name, role, guest_number,
+                                       first_seen_at, last_seen_at, total_active_seconds, visit_count,
+                                       device_key, network_key)
+    values (
+      v_user_id, v_email,
+      coalesce(v_name, 'Guest'),
+      v_role,
+      case when v_role = 'guest' then nextval('public.parkview_guest_number_seq') end,
+      now(), now(), 0, 1,
+      v_device, case when v_role = 'guest' then v_network end
+    )
+    returning * into v_row;
+    if v_role = 'guest' then
+      update public.parkview_users set display_name = 'Guest #' || v_row.guest_number
+      where user_id = v_user_id returning * into v_row;
+    end if;
+  else
+    update public.parkview_users set
+      total_active_seconds = total_active_seconds + case
+        when now() - last_seen_at <= interval '45 seconds'
+          then greatest(0, floor(extract(epoch from now() - last_seen_at)))::bigint
+        else 0 end,
+      visit_count = visit_count + case when now() - last_seen_at > interval '30 minutes' then 1 else 0 end,
+      last_seen_at = now(),
+      email = coalesce(v_email, email),
+      display_name = case when v_role = 'guest'
+                          then 'Guest #' || coalesce(guest_number, 0)
+                          else v_name end,
+      role = v_role,
+      device_key = coalesce(v_device, device_key),
+      network_key = case when v_role = 'guest' then coalesce(v_network, network_key) else network_key end
+    where user_id = v_user_id
+    returning * into v_row;
+  end if;
+
+  insert into public.parkview_presence (user_id, display_name, role, project_id, project_name,
+                                        layout_id, layout_name, updated_at)
+  values (v_user_id, v_row.display_name, v_role,
+          left(coalesce(p_project_id, ''), 120), left(coalesce(p_project_name, ''), 120),
+          left(coalesce(p_layout_id, ''), 160), left(coalesce(p_layout_name, ''), 160), now())
+  on conflict (user_id) do update set
+    display_name = excluded.display_name,
+    role = excluded.role,
+    project_id = excluded.project_id,
+    project_name = excluded.project_name,
+    layout_id = excluded.layout_id,
+    layout_name = excluded.layout_name,
+    updated_at = now();
+
+  return json_build_object(
+    'user_id', v_row.user_id,
+    'display_name', v_row.display_name,
+    'total_active_seconds', v_row.total_active_seconds
+  );
+end;
+$$;
+
+revoke all on function public.parkview_heartbeat(text, text, text, text, text, text) from public;
+grant execute on function public.parkview_heartbeat(text, text, text, text, text, text) to anon, authenticated;
+
+-- Owners: wipe the guest list (e.g. after testing) and restart at Guest #1.
+create or replace function public.parkview_clear_guests()
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_count integer;
+begin
+  if not public.parkview_is_owner() then
+    raise exception 'Only workspace owners can clear guests';
+  end if;
+  delete from public.parkview_presence where role = 'guest';
+  delete from public.parkview_users where role = 'guest';
+  get diagnostics v_count = row_count;
+  perform setval('public.parkview_guest_number_seq', 1, false);
+  return v_count;
+end;
+$$;
+
+revoke all on function public.parkview_clear_guests() from public;
+grant execute on function public.parkview_clear_guests() to authenticated;
 
 notify pgrst, 'reload schema';

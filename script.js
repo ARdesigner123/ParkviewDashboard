@@ -369,6 +369,58 @@
         return guestId;
       };
 
+      // A one-way hash of hardware / OS traits, so the same computer is
+      // recognised as the same guest even in a private window, another
+      // browser, another website address or after clearing site data.
+      // Only the hash is sent; the raw traits never leave the browser.
+      let deviceKeyPromise = null;
+      const getDeviceKey = () => {
+        if (deviceKeyPromise) return deviceKeyPromise;
+        deviceKeyPromise = (async () => {
+          try {
+            if (!window.crypto || !crypto.subtle) return null;
+            let gpu = '';
+            try {
+              const canvas = document.createElement('canvas');
+              const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+              if (gl) {
+                const info = gl.getExtension('WEBGL_debug_renderer_info');
+                gpu = String(info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER) || '');
+                gl.getExtension('WEBGL_lose_context')?.loseContext();
+              }
+            } catch (error) { gpu = ''; }
+            // Normalise the GPU name so different browsers on one machine agree.
+            gpu = gpu.toLowerCase()
+              .replace(/^angle \(/, '').replace(/\)$/, '')
+              .replace(/direct3d.*|vs_\d.*|opengl.*|metal.*|, or similar/g, '')
+              .replace(/\(r\)|\(tm\)|0x[0-9a-f]+/g, '')
+              .split(',').map((part) => part.trim()).filter(Boolean).pop() || gpu;
+            const isTouch = (navigator.maxTouchPoints || 0) > 0;
+            const traits = [
+              navigator.platform || '',
+              Intl.DateTimeFormat().resolvedOptions().timeZone || '',
+              navigator.hardwareConcurrency || 0,
+              navigator.maxTouchPoints || 0,
+              gpu.replace(/\s+/g, ' ').trim(),
+              // Phones/tablets have a fixed screen; desktops can move between monitors.
+              isTouch ? `${Math.max(screen.width, screen.height)}x${Math.min(screen.width, screen.height)}@${window.devicePixelRatio || 1}` : ''
+            ].join('|');
+            const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`parkview-device:${traits}`));
+            const hex = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
+            return `dev-${hex.slice(0, 40)}`;
+          } catch (error) {
+            return null;
+          }
+        })();
+        return deviceKeyPromise;
+      };
+
+      const adoptGuestId = (id) => {
+        if (!id || id === guestId || !/^guest-[A-Za-z0-9-]{8,64}$/.test(id)) return;
+        guestId = id;
+        try { localStorage.setItem(guestIdKey, id); } catch (error) { /* private mode */ }
+      };
+
       const nameColorHash = (str) => {
         let hash = 0;
         for (let i = 0; i < str.length; i++) {
@@ -388,21 +440,40 @@
       const sendHeartbeat = async () => {
         if (document.hidden) return;
         const { project, layout } = currentLocation();
+        const isGuest = !authSession;
+        const payload = {
+          p_client_id: isGuest ? ensureGuestId() : null,
+          p_project_id: project.id,
+          p_project_name: project.name,
+          p_layout_id: layout.id,
+          p_layout_name: layout.name
+        };
+        if (isGuest) {
+          const deviceKey = await getDeviceKey();
+          if (deviceKey) payload.p_device_key = deviceKey;
+        }
+        const post = (body) => supabaseFetch(`${getMarkerCloudRestUrl()}/rpc/parkview_heartbeat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
         try {
-          const response = await supabaseFetch(`${getMarkerCloudRestUrl()}/rpc/parkview_heartbeat`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              p_client_id: authSession ? null : ensureGuestId(),
-              p_project_id: project.id,
-              p_project_name: project.name,
-              p_layout_id: layout.id,
-              p_layout_name: layout.name
-            })
-          });
+          let response = await post(payload);
+          // Database not updated yet? Fall back to the previous version of the call.
+          if (!response.ok && payload.p_device_key && (response.status === 404 || response.status === 300)) {
+            const { p_device_key: unused, ...legacyPayload } = payload;
+            response = await post(legacyPayload);
+          }
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const result = await response.json();
           if (result && typeof result.user_id === 'string') {
+            // The database may recognise this computer as an existing guest.
+            if (isGuest && !authSession) {
+              if (result.user_id !== guestId && presenceUserId && presenceUserId !== result.user_id) {
+                deletePresence(presenceUserId);
+              }
+              adoptGuestId(result.user_id);
+            }
             presenceUserId = result.user_id;
             presenceDisplayName = result.display_name;
           }
@@ -4111,7 +4182,31 @@ const renderMarkers = () => {
             return;
           }
           if (usersTab === 'guests') {
-            listWrap.append(el('p', { className: 'panel-count', text: `Total guest time: ${formatDuration(guestSeconds)}` }));
+            listWrap.append(el('div', { className: 'guest-tools' },
+              el('p', { className: 'panel-count', text: `Total guest time: ${formatDuration(guestSeconds)}` }),
+              el('button', {
+                type: 'button',
+                className: 'panel-button danger',
+                onclick: async (event) => {
+                  if (!window.confirm('Clear all guest history? Guest numbers restart at Guest #1. Signed-in users are not affected.')) return;
+                  const button = event.currentTarget;
+                  button.disabled = true;
+                  try {
+                    const response = await supabaseFetch(`${getMarkerCloudRestUrl()}/rpc/parkview_clear_guests`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: '{}'
+                    });
+                    if (!response.ok) throw new Error(response.status === 404 ? 'Run the latest supabase.sql first.' : `HTTP ${response.status}`);
+                    const removed = await response.json();
+                    announce(`Cleared ${removed} ${removed === 1 ? 'guest' : 'guests'}. Numbering restarts at Guest #1.`);
+                    await load();
+                  } catch (error) {
+                    announce(`Could not clear guests: ${error.message}`, true);
+                    button.disabled = false;
+                  }
+                }
+              }, 'Clear guest history')));
           }
           listWrap.append(el('ul', { className: 'user-list' }, people.map((user) => {
             const presence = online.get(user.user_id);
