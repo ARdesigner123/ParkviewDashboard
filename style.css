@@ -519,6 +519,9 @@
         filter 0.2s ease;
 
     z-index: 1;
+
+    /* Allow Device ID badge to extend beyond marker bounds */
+    overflow: visible;
 }
 
 /* SVG location pin */
@@ -602,16 +605,16 @@
     align-items: center;
     justify-content: center;
 
-    width: 19px;
-    height: 19px;
+    min-width: 40px;
+    height: auto;
 
-    padding: 0;
+    padding: 0 8px;
 
     color: #1677e8;
     background: transparent;
 
     font-family: Arial, sans-serif;
-    font-size: 9px;
+    font-size: 12px;
     font-weight: 900;
 
     line-height: 1;
@@ -622,7 +625,9 @@
 
     pointer-events: none;
     user-select: none;
-    text-shadow: none;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+    -webkit-text-stroke: 0.4px rgb(0, 0, 0);
+    z-index: 3;
 }
 
     .zoom-controls {
@@ -1988,11 +1993,15 @@
   .map-marker svg { width: 80%; height: 80%; }
   .map-marker-device-id {
     display: flex !important;
-    width: 14px !important;
-    height: 14px !important;
-    font-size: 7px !important;
+    min-width: 30px !important;
+    height: auto !important;
+    font-size: 9px !important;
     top: 32% !important;
     left: 40% !important;
+    padding: 0 4px !important;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.35) !important;
+    -webkit-text-stroke: 0.3px rgb(0, 0, 0) !important;
+    z-index: 3 !important;
   }
   .map-marker .device-id-text {
     position: absolute;
