@@ -2239,7 +2239,7 @@
     justify-content: flex-end;
   }
   .add-button { width: 100%; justify-content: center; }
-  .nav-arrow { display: none; }
+  .nav-arrow { display: block; }
   .project-rename svg, .project-delete svg { width: 12px; height: 12px; }
   .content-grid { gap: 4px; }
   .viewer-toolbar { padding: 0 8px 0 12px; }
