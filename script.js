@@ -13,8 +13,6 @@
       const markerEditor = document.getElementById('markerEditor');
       const markerToggle = document.getElementById('markerToggle');
       const moveMarkerToggle = document.getElementById('moveMarkerToggle');
-      const markerLayer = document.getElementById('markerLayer');
-      const markerEditor = document.getElementById('markerEditor');
       const markerClose = document.getElementById('markerClose');
       const markerDetailsView = document.getElementById('markerDetailsView');
       const markerEditFields = document.getElementById('markerEditFields');
@@ -23,16 +21,6 @@
       const sidebar = document.querySelector('.app-sidebar');
       const layoutList = document.getElementById('layoutList');
       const sidebarToggleBtn = document.createElement('button');
-      const markerLayer = document.getElementById('markerLayer');
-      const markerEditor = document.getElementById('markerEditor');
-      const markerClose = document.getElementById('markerClose');
-      const markerDetailsView = document.getElementById('markerDetailsView');
-      const markerEditFields = document.getElementById('markerEditFields');
-      const markerEdit = document.getElementById('markerEdit');
-      const markerEditorActions = document.getElementById('markerEditorActions');
-      const markerLayer = document.getElementById('markerLayer');
-      const sidebar = document.querySelector('.app-sidebar');
-      const layoutList = document.getElementById('layoutList');
       const sidebarToggle = document.createElement('button');
       const appShell = document.querySelector('.app-shell');
       const loginScreen = document.getElementById('loginScreen');
@@ -3435,6 +3423,7 @@ const selectLayout = (layoutId) => {
   const totalLayouts = Array.from(layoutList.querySelectorAll('.layout-item:not(.has-children)')).length;
   document.getElementById('layoutCount').textContent = `${totalLayouts} sheets`;
 };
+  /* ========================================
    SIDEBAR TOGGLE BUTTON EVENT LISTENER
    ========================================= */
 
