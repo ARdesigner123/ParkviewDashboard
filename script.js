@@ -1451,7 +1451,27 @@
         };
       };
 
-      
+      // True when a stored "YYYY-MM" inspection month is earlier than this month.
+      const isInspectionOverdue = (value) => {
+        const match = String(value || '').match(/^(\d{4})-(\d{2})/);
+        if (!match) return false;
+        const now = new Date();
+        const due = Number(match[1]) * 12 + Number(match[2]) - 1;
+        return due < now.getFullYear() * 12 + now.getMonth();
+      };
+
+      // Expanding ring at a marker's tip — the "ping" when it is tapped.
+      const spawnMarkerRipple = (pin) => {
+        const ripple = document.createElement('span');
+        ripple.className = 'marker-ripple';
+        if (pin.classList.contains('is-overdue')) ripple.classList.add('is-alert');
+        ripple.style.left = pin.style.left;
+        ripple.style.top = pin.style.top;
+        ripple.addEventListener('animationend', () => ripple.remove(), { once: true });
+        markerLayer.append(ripple);
+        setTimeout(() => ripple.remove(), 1200);
+      };
+
 const renderMarkers = () => {
     markerLayer.replaceChildren();
 
@@ -1490,57 +1510,61 @@ const renderMarkers = () => {
 
         pin.title = marker.product || marker.location || 'Layout marker';
 
-        // Google Maps-style blue location pin
-        const markerSVG = document.createElementNS(
-            'http://www.w3.org/2000/svg',
-            'svg'
-        );
-
+        // Location pin — the Device ID is drawn inside the SVG so it scales with
+        // the pin and stays exactly centred in the white circle on every device.
+        const svgNS = 'http://www.w3.org/2000/svg';
+        const markerSVG = document.createElementNS(svgNS, 'svg');
         markerSVG.setAttribute('viewBox', '0 0 48 60');
         markerSVG.setAttribute('aria-hidden', 'true');
+        markerSVG.classList.add('map-marker-pin');
 
-        // Blue teardrop-shaped pin
-        const pinShape = document.createElementNS(
-            'http://www.w3.org/2000/svg',
-            'path'
-        );
+        const pinShape = document.createElementNS(svgNS, 'path');
+        pinShape.setAttribute('class', 'map-marker-body');
+        pinShape.setAttribute('d', 'M24 1.5C12 1.5 2.5 11 2.5 23c0 14.6 18.4 31.9 20.4 33.7a1.6 1.6 0 0 0 2.2 0C27.1 54.9 45.5 37.6 45.5 23 45.5 11 36 1.5 24 1.5Z');
 
-        pinShape.setAttribute(
-            'd',
-            'M24 2 C11.85 2 3 11.1 3 23 C3 37.5 24 58 24 58 S45 37.5 45 23 C45 11.1 36.15 2 24 2 Z'
-        );
-
-        pinShape.setAttribute('fill', '#1677e8');
-        pinShape.setAttribute('stroke', '#ffffff');
-        pinShape.setAttribute('stroke-width', '1.5');
-
-        // White circular centre
-        const pinCentre = document.createElementNS(
-            'http://www.w3.org/2000/svg',
-            'circle'
-        );
-
+        const pinCentre = document.createElementNS(svgNS, 'circle');
+        pinCentre.setAttribute('class', 'map-marker-core');
         pinCentre.setAttribute('cx', '24');
-        pinCentre.setAttribute('cy', '22');
-        pinCentre.setAttribute('r', '12');
-        pinCentre.setAttribute('fill', '#ffffff');
+        pinCentre.setAttribute('cy', '23');
+        pinCentre.setAttribute('r', '16.5');
 
-        // Add SVG elements
         markerSVG.append(pinShape, pinCentre);
 
-        pin.append(markerSVG);
-
-        // Device ID inside the white circle
-        if (marker.deviceId) {
-
-            const badge = document.createElement('span');
-
-            badge.className = 'map-marker-device-id';
-
-            badge.textContent = String(marker.deviceId);
-
-            pin.append(badge);
+        const deviceId = String(marker.deviceId ?? '').trim();
+        if (deviceId) {
+          const label = document.createElementNS(svgNS, 'text');
+          label.setAttribute('class', 'map-marker-label');
+          label.setAttribute('x', '24');
+          label.setAttribute('y', '23.6');
+          label.setAttribute('text-anchor', 'middle');
+          label.setAttribute('dominant-baseline', 'central');
+          // Shrink the type as the ID gets longer so it always fits the circle.
+          const fontSizes = [17, 17, 15, 12.5, 10.5];
+          label.setAttribute('font-size', String(fontSizes[deviceId.length] || 10.5));
+          if (deviceId.length >= 4) {
+            label.setAttribute('textLength', deviceId.length === 4 ? '26' : '28');
+            label.setAttribute('lengthAdjust', 'spacingAndGlyphs');
+          }
+          label.textContent = deviceId;
+          markerSVG.append(label);
+        } else {
+          const dot = document.createElementNS(svgNS, 'circle');
+          dot.setAttribute('class', 'map-marker-dot');
+          dot.setAttribute('cx', '24');
+          dot.setAttribute('cy', '23');
+          dot.setAttribute('r', '5');
+          markerSVG.append(dot);
         }
+
+        if (isInspectionOverdue(marker.serviceDate)) {
+          pin.classList.add('is-overdue');
+          pin.title = `${pin.title} — inspection overdue`;
+        }
+        if (!markerMoveMode && marker.id === editingMarkerId && !markerEditor.hidden) {
+          pin.classList.add('is-active');
+        }
+
+        pin.append(markerSVG);
 
         // Original marker click functionality
         pin.addEventListener('click', (event) => {
@@ -1580,6 +1604,13 @@ const renderMarkers = () => {
                 panY;
 
             setMarkerMode(false);
+
+            markerLayer.querySelectorAll('.map-marker.is-active').forEach((other) => other.classList.remove('is-active'));
+            pin.classList.remove('is-bouncing');
+            void pin.offsetWidth; // restart the bounce animation
+            pin.classList.add('is-active', 'is-bouncing');
+            pin.addEventListener('animationend', () => pin.classList.remove('is-bouncing'), { once: true });
+            spawnMarkerRipple(pin);
 
             showMarkerDetails(screenX, screenY, marker);
 
@@ -1650,23 +1681,71 @@ const renderMarkers = () => {
         photoViewerReturnFocus = null;
       };
 
+      // ---- Marker popup animation helpers --------------------------------
+      // The popup grows out of (and shrinks back into) the marker that opened it.
+      let markerEditorCloseTimer = null;
+      const MARKER_EDITOR_CLOSE_MS = 280;
+
+      const positionMarkerEditor = (x, y) => {
+        const left = Math.max(8, Math.min(x + 12, stage.clientWidth - markerEditor.offsetWidth - 8));
+        const top = Math.max(8, Math.min(y + 12, stage.clientHeight - markerEditor.offsetHeight - 8));
+        markerEditor.style.left = `${left}px`;
+        markerEditor.style.top = `${top}px`;
+        markerEditor.style.setProperty('--origin-x', `${x - left}px`);
+        markerEditor.style.setProperty('--origin-y', `${y - top}px`);
+      };
+
+      const playMarkerEditorOpen = (wasOpen) => {
+        clearTimeout(markerEditorCloseTimer);
+        markerEditorCloseTimer = null;
+        markerEditor.classList.remove('is-closing', 'is-opening', 'is-swapping');
+        void markerEditor.offsetWidth; // restart CSS animations
+        markerEditor.classList.add(wasOpen ? 'is-swapping' : 'is-opening');
+      };
+
+      const isMarkerEditorShowing = () => !markerEditor.hidden && !markerEditor.classList.contains('is-closing');
+
+      // Keep the popup inside the stage when its content (e.g. photos) changes size.
+      if ('ResizeObserver' in window) {
+        new ResizeObserver(() => {
+          if (markerPanelPoint && isMarkerEditorShowing()) positionMarkerEditor(markerPanelPoint.x, markerPanelPoint.y);
+        }).observe(markerEditor);
+      }
+
+      const clearMarkerEditorContent = () => {
+        markerPhotoGallery.replaceChildren();
+        document.getElementById('markerDetailsGrid').replaceChildren();
+        document.getElementById('markerDetailsPhotos').replaceChildren();
+      };
+
       const closeMarkerEditor = () => {
         photoLoadToken += 1;
         closePhotoViewer();
         pendingMarkerPhotos.forEach((photo) => {
           if (sessionMarkerPhotos.get(photo.id) !== photo.url) URL.revokeObjectURL(photo.url);
         });
-        markerEditor.hidden = true;
         editingMarkerId = null;
         markerPanelPoint = null;
         draftMarkerPoint = null;
         pendingMarkerPhotos = [];
         removedMarkerPhotoIds = new Set();
         markerPhotoInput.value = '';
-        markerPhotoGallery.replaceChildren();
-        document.getElementById('markerDetailsGrid').replaceChildren();
-        document.getElementById('markerDetailsPhotos').replaceChildren();
+        markerLayer.querySelectorAll('.map-marker.is-active').forEach((pin) => pin.classList.remove('is-active'));
         setMarkerMode(false);
+
+        if (markerEditor.hidden || markerEditor.classList.contains('is-closing')) {
+          if (markerEditor.hidden) clearMarkerEditorContent();
+          return;
+        }
+        // Shrink the popup to zero, then actually hide it.
+        markerEditor.classList.remove('is-opening', 'is-swapping');
+        markerEditor.classList.add('is-closing');
+        markerEditorCloseTimer = setTimeout(() => {
+          markerEditorCloseTimer = null;
+          markerEditor.classList.remove('is-closing');
+          markerEditor.hidden = true;
+          clearMarkerEditorContent();
+        }, MARKER_EDITOR_CLOSE_MS);
       };
 
       const createPhotoCard = (photo, url, isPending = false, canRemove = true) => {
@@ -1780,18 +1859,9 @@ const renderMarkers = () => {
       };
 
       const showMarkerDetails = (x, y, marker) => {
+        const wasOpen = isMarkerEditorShowing();
         photoLoadToken += 1;
         editingMarkerId = marker.id;
-        
-        // Add smooth animation class
-        const detailsView = document.getElementById('markerDetailsView');
-        if (detailsView) {
-          detailsView.classList.add('marker-click-enter');
-          // Remove animation class after it completes to allow re-animation
-          setTimeout(() => {
-            detailsView.classList.remove('marker-click-enter');
-          }, 300);
-        }
         markerPanelPoint = { x, y };
         document.getElementById('markerEditorTitle').textContent = 'Marker Details';
         document.querySelector('.marker-editor-heading p').textContent = 'Device details';
@@ -1809,28 +1879,35 @@ const renderMarkers = () => {
           ['Venue', marker.location],
           ['Next Inspection Date', formatMonthYear(marker.serviceDate)],
           ['Manufacturing Date', formatMonthYear(marker.manufacturingDate)]
-        ].forEach(([label, value]) => {
+        ].forEach(([label, value], index) => {
           const item = document.createElement('div');
           item.className = 'marker-detail-item';
+          item.style.setProperty('--i', String(index));
           const itemLabel = document.createElement('span');
           itemLabel.textContent = label;
           const itemValue = document.createElement('strong');
           itemValue.textContent = value || '—';
           item.append(itemLabel, itemValue);
+          if (label === 'Device ID') item.classList.add('is-primary');
+          if (label === 'Next Inspection Date' && isInspectionOverdue(marker.serviceDate)) {
+            item.classList.add('is-alert');
+            const flag = document.createElement('em');
+            flag.className = 'marker-detail-flag';
+            flag.textContent = 'Overdue';
+            itemValue.append(flag);
+          }
           detailsGrid.append(item);
         });
         markerEditor.hidden = false;
         removedMarkerPhotoIds = new Set();
         renderMarkerPhotos(marker, document.getElementById('markerDetailsPhotos'), false, false);
-        requestAnimationFrame(() => {
-          const left = Math.max(8, Math.min(x + 12, stage.clientWidth - markerEditor.offsetWidth - 8));
-          const top = Math.max(8, Math.min(y + 12, stage.clientHeight - markerEditor.offsetHeight - 8));
-          markerEditor.style.left = `${left}px`;
-          markerEditor.style.top = `${top}px`;
-        });
+        positionMarkerEditor(x, y);
+        playMarkerEditorOpen(wasOpen);
+        requestAnimationFrame(() => positionMarkerEditor(x, y));
       };
 
       const showMarkerEditor = (x, y, marker = null) => {
+        const wasOpen = isMarkerEditorShowing();
         photoLoadToken += 1;
         pendingMarkerPhotos.forEach((photo) => URL.revokeObjectURL(photo.url));
         editingMarkerId = marker ? marker.id : null;
@@ -1856,12 +1933,11 @@ const renderMarkers = () => {
         markerEditor.hidden = false;
         photoLoadToken += 1;
         renderMarkerPhotos(marker);
+        positionMarkerEditor(x, y);
+        playMarkerEditorOpen(wasOpen);
         requestAnimationFrame(() => {
-          const left = Math.max(8, Math.min(x + 12, stage.clientWidth - markerEditor.offsetWidth - 8));
-          const top = Math.max(8, Math.min(y + 12, stage.clientHeight - markerEditor.offsetHeight - 8));
-          markerEditor.style.left = `${left}px`;
-          markerEditor.style.top = `${top}px`;
-          document.getElementById('markerProduct').focus();
+          positionMarkerEditor(x, y);
+          document.getElementById('markerProduct').focus({ preventScroll: true });
         });
       };
 
