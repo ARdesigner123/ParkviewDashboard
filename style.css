@@ -1,3 +1,120 @@
+/* ========================================
+   RESPONSIVE MARKERS AND DEVICE ID
+   ========================================= */
+
+@media (max-width: 768px) {
+  .map-marker {
+    width: 24px;
+    height: 32px;
+    font-size: 8px;
+  }
+  .map-marker svg { width: 80%; height: 80%; }
+  .map-marker-device-id {
+    display: none !important;
+  }
+  .map-marker .device-id-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--blue);
+    font-size: 7px;
+    font-weight: 700;
+    text-align: center;
+    width: auto;
+    white-space: nowrap;
+    pointer-events: none;
+    user-select: none;
+  }
+}
+
+@media (min-width: 769px) {
+  .map-marker-device-id {
+    display: flex !important;
+  }
+  .map-marker .device-id-text {
+    display: none;
+  }
+}
+
+/* ========================================
+   SMOOTH ANIMATION FOR MARKER CLICK
+   ========================================= */
+
+.marker-click-enter {
+  animation: markerClickIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.marker-click-exit {
+  animation: markerClickOut 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes markerClickIn {
+  from {
+    opacity: 0;
+    transform: scale(0.8) translate(-50%, -100%);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translate(-50%, -100%);
+  }
+}
+
+@keyframes markerClickOut {
+  from {
+    opacity: 1;
+    transform: scale(1) translate(-50%, -100%);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.8) translate(-50%, -100%);
+  }
+}
+
+.marker-details-panel {
+  animation: detailsPanelIn 0.25s ease-out forwards;
+}
+
+@keyframes detailsPanelIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ========================================
+   SIDEBAR TOGGLE ANIMATION
+   ========================================= */
+
+.sidebar-card.collapsed {
+  animation: sidebarCollapse 0.25s ease forwards;
+}
+
+@keyframes sidebarCollapse {
+  from {
+    width: 250px;
+    opacity: 1;
+  }
+  to {
+    width: 0;
+    opacity: 0;
+  }
+}
+
+@keyframes sidebarExpand {
+  from {
+    width: 0;
+    opacity: 0;
+  }
+  to {
+    width: 250px;
+    opacity: 1;
+  }
+}
 :root {
       color-scheme: light;
       --ink: #17212f;
@@ -1845,6 +1962,304 @@
     .login-status-icon { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border-radius: 9px; color: #a9ddff; background: rgb(22 119 200 / 22%); }
     .login-status-icon svg { width: 19px; height: 19px; }
     .login-status-card strong, .login-status-card small { display: block; }
+/* ========================================
+   SMOOTH ANIMATION FOR MARKER CLICK
+   ========================================= */
+
+.marker-click-enter {
+  animation: markerClickIn 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.marker-click-exit {
+  animation: markerClickOut 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes markerClickIn {
+  from {
+    opacity: 0;
+    transform: scale(0.8) translate(-50%, -100%);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translate(-50%, -100%);
+  }
+}
+
+@keyframes markerClickOut {
+  from {
+    opacity: 1;
+    transform: scale(1) translate(-50%, -100%);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.8) translate(-50%, -100%);
+  }
+}
+
+.marker-details-panel {
+  animation: detailsPanelIn 0.25s ease-out forwards;
+}
+
+@keyframes detailsPanelIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+/* ========================================
+   SIDEBAR TOGGLE BUTTON
+   ========================================= */
+
+.sidebar-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: color .15s ease, background .15s ease;
+}
+
+.sidebar-toggle-btn:hover { color: var(--blue-dark); background: #edf6fd; }
+.sidebar-toggle-btn:focus-visible { outline: 3px solid #86c7ff; outline-offset: 2px; }
+
+.sidebar-toggle-btn svg { width: 18px; height: 18px; }
+
+.sidebar-toggle-btn[aria-pressed="true"] { color: var(--blue); }
+.sidebar-toggle-btn[aria-pressed="true"]:hover { color: var(--blue-dark); background: #e8f3fc; }
+
+.sidebar-toggle-btn svg:first-child { transition: transform .2s ease; }
+.sidebar-toggle-btn[aria-pressed="true"] svg:first-child { transform: rotate(180deg); display: block; }
+.sidebar-toggle-btn svg:last-child { display: none; }
+.sidebar-toggle-btn[aria-pressed="true"] svg:last-child { display: block; }
+
+/* ========================================
+   HIERARCHICAL LAYOUT LIST
+   ========================================= */
+
+.layout-item.has-children { position: relative; padding-right: 30px; }
+.layout-item.has-children .layout-item-title { display: inline-block; }
+.layout-item.has-children .toggle-children {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  color: #8a97a8;
+  font-size: 10px;
+  cursor: pointer;
+  transition: transform .2s ease, color .15s ease;
+}
+.layout-item.has-children .toggle-children:hover { color: var(--blue-dark); }
+.layout-item.has-children .toggle-children:hover svg { stroke: var(--blue-dark); }
+.layout-item.has-children .toggle-children:focus-visible {
+  outline: 3px solid #86c7ff;
+  outline-offset: 2px;
+  border-radius: 50%;
+}
+.layout-item.has-children .toggle-children.collapsed svg { transform: rotate(90deg); }
+.layout-item.has-children .toggle-children.expanded svg { transform: rotate(0deg); }
+
+.sub-layout-list {
+  display: none;
+  margin-left: 12px;
+  padding-left: 8px;
+  border-left: 1px solid var(--line);
+  gap: 4px;
+}
+.sub-layout-list .layout-item {
+  padding: 5px 10px;
+  font-size: 9px;
+  min-height: 36px;
+}
+.sub-layout-list .layout-item.active { border-color: #b7daf5; background: #f0f8fe; }
+.sub-layout-list .layout-item:hover { background: #f6f9fc; }
+
+/* ========================================
+   SIDEBAR COLLAPSED
+   ========================================= */
+
+.app-sidebar.collapsed .sidebar-card:not(#sidebarToggleBtn) { display: none; }
+.app-sidebar.collapsed .main-content { margin-left: 0; }
+.app-sidebar.collapsed #mainContent { width: 100%; }
+/* ========================================
+   RESPONSIVE MARKERS AND DEVICE ID
+   ========================================= */
+
+@media (max-width: 768px) {
+  .map-marker {
+    width: 24px;
+    height: 32px;
+    font-size: 8px;
+  }
+  .map-marker svg { width: 80%; height: 80%; }
+  .map-marker-device-id {
+    display: none !important;
+  }
+  .map-marker .device-id-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--blue);
+    font-size: 7px;
+    font-weight: 700;
+    text-align: center;
+    width: auto;
+    white-space: nowrap;
+    pointer-events: none;
+    user-select: none;
+  }
+}
+
+@media (min-width: 769px) {
+  .map-marker-device-id {
+    display: flex !important;
+  }
+  .map-marker .device-id-text {
+    display: none;
+  }
+}
+
+/* ========================================
+   RESPONSIVE LAYOUT
+   ========================================= */
+
+@media (max-width: 1024px) {
+  .content-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .sidebar-card {
+    order: 2;
+    width: 100%;
+  }
+  .viewer-card {
+    order: 1;
+    width: 100%;
+  }
+}
+
+@media (max-width: 768px) {
+  .topbar {
+    padding: 0 16px;
+  }
+  .topbar-right {
+    gap: 12px;
+  }
+  .brand img {
+    width: 100px;
+    max-height: 39px;
+  }
+  .brand-name {
+    font-size: 13px;
+  }
+  .brand-caption {
+    font-size: 10px;
+  }
+  .heading-actions {
+    gap: 6px;
+  }
+  .project-select-label {
+    font-size: 9px;
+  }
+  #projectSelect {
+    height: 36px;
+    padding: 0 20px 0 10px;
+    font-size: 10px;
+  }
+  .add-button {
+    height: 36px;
+    padding: 0 12px;
+    font-size: 11px;
+  }
+  .add-button svg { width: 15px; height: 15px; }
+  .nav-arrow {
+    width: 36px;
+    height: 36px;
+  }
+  .nav-arrow svg { width: 16px; height: 16px; }
+  .project-rename svg, .project-delete svg { width: 13px; height: 13px; }
+  .sidebar-heading h2 { font-size: 11px; }
+  .count-badge { padding: 3px 5px; font-size: 9px; }
+  .layout-list { padding: 8px; gap: 5px; }
+  .layout-item { min-height: 44px; padding: 5px; gap: 6px; font-size: 9px; }
+  .layout-item-title { font-size: 9px; }
+  .layout-item-meta { font-size: 8px; }
+  .layout-thumb { width: 50px; height: 30px; }
+  .layout-action { width: 24px; height: 26px; font-size: 8px; }
+  .layout-action svg { width: 12px; height: 12px; }
+  .layout-action.rename { font-size: 8px; padding: 0 4px; }
+  .layout-action.rename svg { width: 11px; height: 11px; }
+  .project-name { font-size: 10px; }
+  .project-location { font-size: 9px; }
+  .page-heading { gap: 12px; }
+  .page-heading .project-title-row { gap: 3px; }
+  .eyebrow { font-size: 9px; }
+  h1 { font-size: clamp(18px, 4vw, 22px); }
+  .heading-subtitle { font-size: 11px; }
+}
+
+@media (max-width: 480px) {
+  .topbar {
+    padding: 0 12px;
+    height: 56px;
+  }
+  .topbar-right {
+    gap: 8px;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .live-status, .live-users, .account-menu {
+    margin-top: 8px;
+    width: 100%;
+  }
+  .live-users-popover, .account-popover {
+    left: 0;
+    right: 0;
+    margin: 0;
+  }
+  .brand img { width: 80px; max-height: 31px; }
+  .brand-name { display: none; }
+  .brand-caption { display: none; }
+  .project-select-label { display: none; }
+  #projectSelect { display: none; }
+  .heading-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .add-button { width: 100%; justify-content: center; }
+  .nav-arrow { display: none; }
+  .project-rename svg, .project-delete svg { width: 12px; height: 12px; }
+  .content-grid { gap: 4px; }
+  .viewer-toolbar { padding: 0 8px 0 12px; }
+  .sheet-heading { gap: 6px; }
+  .sheet-icon { width: 24px; height: 24px; }
+  .sheet-icon svg { width: 14px; height: 14px; }
+  .sheet-title { font-size: 10px; }
+  .sheet-type { font-size: 9px; }
+  .sheet-counter { padding: 4px 6px; font-size: 9px; }
+  .plan-stage { background-size: 8px 8px; }
+  .marker-layer { pointer-events: auto; }
+  .zoom-controls { display: none; }
+  .viewer-hint { display: none; }
+  .keyboard-hint { display: none; }
+  .sidebar-card { display: none; }
+  .page-heading { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .project-title-row { width: 100%; justify-content: space-between; }
+  .project-select-label { display: block; }
+  #projectSelect { display: block; }
+}
     .login-status-card strong { font-size: 11px; }
     .login-status-card small { margin-top: 4px; color: #aabbd0; font-size: 9px; }
     .login-status-dot { width: 6px; height: 6px; margin-left: auto; }

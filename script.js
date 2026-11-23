@@ -13,6 +13,27 @@
       const markerEditor = document.getElementById('markerEditor');
       const markerToggle = document.getElementById('markerToggle');
       const moveMarkerToggle = document.getElementById('moveMarkerToggle');
+      const markerLayer = document.getElementById('markerLayer');
+      const markerEditor = document.getElementById('markerEditor');
+      const markerClose = document.getElementById('markerClose');
+      const markerDetailsView = document.getElementById('markerDetailsView');
+      const markerEditFields = document.getElementById('markerEditFields');
+      const markerEdit = document.getElementById('markerEdit');
+      const markerEditorActions = document.getElementById('markerEditorActions');
+      const sidebar = document.querySelector('.app-sidebar');
+      const layoutList = document.getElementById('layoutList');
+      const sidebarToggleBtn = document.createElement('button');
+      const markerLayer = document.getElementById('markerLayer');
+      const markerEditor = document.getElementById('markerEditor');
+      const markerClose = document.getElementById('markerClose');
+      const markerDetailsView = document.getElementById('markerDetailsView');
+      const markerEditFields = document.getElementById('markerEditFields');
+      const markerEdit = document.getElementById('markerEdit');
+      const markerEditorActions = document.getElementById('markerEditorActions');
+      const markerLayer = document.getElementById('markerLayer');
+      const sidebar = document.querySelector('.app-sidebar');
+      const layoutList = document.getElementById('layoutList');
+      const sidebarToggle = document.createElement('button');
       const appShell = document.querySelector('.app-shell');
       const loginScreen = document.getElementById('loginScreen');
       const accountMenu = document.getElementById('accountMenu');
@@ -1773,6 +1794,16 @@ const renderMarkers = () => {
       const showMarkerDetails = (x, y, marker) => {
         photoLoadToken += 1;
         editingMarkerId = marker.id;
+        
+        // Add smooth animation class
+        const detailsView = document.getElementById('markerDetailsView');
+        if (detailsView) {
+          detailsView.classList.add('marker-click-enter');
+          // Remove animation class after it completes to allow re-animation
+          setTimeout(() => {
+            detailsView.classList.remove('marker-click-enter');
+          }, 300);
+        }
         markerPanelPoint = { x, y };
         document.getElementById('markerEditorTitle').textContent = 'Marker Details';
         document.querySelector('.marker-editor-heading p').textContent = 'Device details';
@@ -3223,6 +3254,201 @@ const renderMarkers = () => {
         }
       });
       window.addEventListener('focus', () => {
+/* ========================================
+   SIDEBAR TOGGLE
+   ========================================= */
+
+const toggleSidebar = () => {
+  const isCollapsed = document.body.classList.toggle('collapsed');
+  const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+  if (sidebarToggleBtn) {
+    sidebarToggleBtn.setAttribute('aria-pressed', String(!isCollapsed));
+  }
+};
+
+/* ========================================
+/* ========================================
+   RENDER LAYOUT LIST
+   ========================================= */
+
+const renderLayoutList = () => {
+  const layoutList = document.getElementById('layoutList');
+  if (!layoutList) return;
+  
+  layoutList.replaceChildren();
+  
+  const activeProject = projects.find((project) => !project.deleted) || projects[0];
+  const allLayouts = activeProject?.layouts || [];
+  
+  // Group layouts by project
+  const projectLayouts = new Map();
+  
+  // Add built-in layouts under the default project
+  const defaultProject = projects.find((p) => p.id === defaultProjectId);
+  if (defaultProject && defaultProject.layouts) {
+    projectLayouts.set(defaultProject.id, {
+      name: defaultProject.name,
+      layouts: defaultProject.layouts.map((layout) => ({
+        id: layout.id,
+        name: layout.name,
+        src: layout.src,
+        type: layout.type,
+        uploaded: layout.uploaded
+      }))
+    });
+  }
+  
+  // Add saved projects with their layouts
+  projects.forEach((project) => {
+    if (project.deleted) return;
+    if (project.id === defaultProjectId) return;
+/* ========================================
+   SELECT LAYOUT
+   ========================================= */
+
+const selectLayout = (layoutId) => {
+  const layout = layouts.find((l) => l.id === layoutId);
+  if (!layout) return;
+  
+  selectedIndex = layouts.findIndex((l) => l.id === layoutId);
+  
+  // Update the viewer image
+  const planImage = document.getElementById('planImage');
+  if (planImage) {
+    planImage.src = layout.src;
+    planImage.alt = layout.name;
+    document.getElementById('sheetTitle').textContent = layout.name;
+    document.getElementById('sheetType').textContent = layout.type || 'Project drawing';
+    document.getElementById('sheetCounter').textContent = `${selectedIndex + 1} / ${layouts.length}`;
+  }
+  
+  // Update the marker layer transform
+  markerLayer.style.transform = `translate(var(--pan-x, 0px), var(--pan-y, 0px)) scale(var(--zoom, 1))`;
+  
+  // Remove existing markers and re-create for new layout
+  markerLayer.replaceChildren();
+  markersByLayout.clear();
+  sessionMarkerPhotos.clear();
+  
+  // Fetch and create markers for this layout
+  createMarkersForLayout(layoutId);
+  
+  // Update presence
+  refreshPresenceUI();
+};
+    projectLayouts.set(project.id, {
+      name: project.name,
+      layouts: (project.layouts || []).map((layout) => ({
+        id: layout.id,
+        name: layout.name,
+        src: layout.src,
+        type: layout.type,
+        uploaded: layout.uploaded
+      }))
+    });
+  });
+  
+  // Render each project with its layouts
+  projectLayouts.forEach((projectData, projectId) => {
+    const projectItem = document.createElement('div');
+    projectItem.className = 'layout-item has-children';
+    projectItem.setAttribute('role', 'button');
+    projectItem.setAttribute('tabindex', '0');
+    projectItem.setAttribute('aria-expanded', 'false');
+    projectItem.setAttribute('aria-label', `${projectData.name} layouts`);
+    
+    projectItem.innerHTML = `
+      <div class="layout-item-title">${projectData.name}</div>
+      <button class="toggle-children" aria-label="Show ${projectData.name} layouts" aria-pressed="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><path d="M13 12h5M12 5l-7 7 7 7"/><path d="M5 12h14M12 15l7-7 7 7"/></svg>
+      </button>
+    `;
+    
+    // Project click handler
+    projectItem.addEventListener('click', (e) => {
+      if (e.target.classList.contains('toggle-children') || e.target.parentElement.classList.contains('toggle-children')) {
+        const isExpanded = projectItem.getAttribute('aria-expanded') === 'true';
+        projectItem.setAttribute('aria-expanded', !isExpanded);
+        const subList = projectItem.querySelector('.sub-layout-list');
+        if (subList) {
+          subList.hidden = isExpanded;
+        }
+        return;
+      }
+      
+      // Navigate to layout when project header is clicked
+      const layoutItem = e.target.closest('.layout-item:not(.has-children)');
+      if (layoutItem) {
+        const layoutId = layoutItem.dataset.layoutId;
+        if (layoutId) {
+          selectLayout(layoutId);
+        }
+      }
+    });
+    
+    // Keyboard accessibility
+    projectItem.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        projectItem.click();
+      }
+    });
+    
+    // Create sub-layout list
+    const subLayoutList = document.createElement('div');
+    subLayoutList.className = 'sub-layout-list';
+    subLayoutList.id = `sub-layout-${projectId}`;
+    subLayoutList.hidden = true;
+    
+    projectData.layouts.forEach((layout, layoutIndex) => {
+      const layoutItem = document.createElement('div');
+      layoutItem.className = 'layout-item';
+      layoutItem.dataset.layoutId = layout.id;
+      layoutItem.innerHTML = `
+        <svg class="layout-thumb" aria-hidden="true" viewBox="0 0 66 42"><image href="${layout.src}" width="66" height="42" preserveAspectRatio="xMidYMid slice"/></svg>
+        <div class="layout-item-title">${layout.name}</div>
+        <div class="layout-item-meta">${layout.type}</div>
+      `;
+      
+      // Add click handler for layout item
+      layoutItem.addEventListener('click', () => {
+        selectLayout(layout.id);
+      });
+      
+      // Add keyboard accessibility
+      layoutItem.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          layoutItem.click();
+        }
+      });
+      
+      subLayoutList.appendChild(layoutItem);
+    });
+    
+    projectItem.appendChild(subLayoutList);
+    layoutList.appendChild(projectItem);
+  });
+  
+  // Update layout count
+  const totalLayouts = Array.from(layoutList.querySelectorAll('.layout-item:not(.has-children)')).length;
+  document.getElementById('layoutCount').textContent = `${totalLayouts} sheets`;
+};
+   SIDEBAR TOGGLE BUTTON EVENT LISTENER
+   ========================================= */
+
+const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+if (sidebarToggleBtn) {
+  sidebarToggleBtn.addEventListener('click', toggleSidebar);
+}
+
+// Initialize layout list on page load
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', renderLayoutList);
+} else {
+  renderLayoutList();
+}
         markerSyncPromise = refreshSharedMarkers();
         const projectSync = syncProjectsFromCloud();
         layoutSyncPromise = projectSync.then(() => syncLayoutsFromCloud()).catch((error) => {
