@@ -648,4 +648,23 @@ $$;
 revoke all on function public.parkview_clear_guests() from public;
 grant execute on function public.parkview_clear_guests() to authenticated;
 
+
+
+-- =====================================================================
+-- Marker types (FX / EX / SMD / EMT): give every older marker a type.
+-- Markers created before types existed were fire extinguishers, unless
+-- their Device Type text says otherwise. Safe to re-run: only markers
+-- without a saved type are changed; "Other" (pin) markers are left alone.
+-- =====================================================================
+update public.parkview_markers
+set marker = marker || jsonb_build_object('markerType',
+  case
+    when lower(coalesce(marker ->> 'deviceType', '')) ~ '(extinguish|\mfx\M)' then 'fx'
+    when lower(coalesce(marker ->> 'deviceType', '')) ~ '(\mexit\M|\mex\M)' then 'ex'
+    when lower(coalesce(marker ->> 'deviceType', '')) ~ '(detector|smoke|\msmd\M)' then 'smd'
+    when lower(coalesce(marker ->> 'deviceType', '')) ~ '(\memt\M|emergency|train light|twin)' then 'emt'
+    else 'fx'
+  end)
+where coalesce(marker ->> 'markerType', '') not in ('fx', 'ex', 'smd', 'emt', 'pin');
+
 notify pgrst, 'reload schema';

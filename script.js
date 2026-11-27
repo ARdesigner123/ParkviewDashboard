@@ -1346,6 +1346,8 @@
           markerSyncErrorAnnounced = false;
           lastCloudSyncAt = Date.now();
           lastCloudSyncFailed = false;
+          markerSyncInProgress = false;
+          await migrateLegacyMarkerTypes();
         } catch (error) {
           console.error('Unable to sync shared markers:', error);
           lastCloudSyncFailed = true;
@@ -1398,8 +1400,30 @@
       const markerTypeOf = (marker) => {
         if (!marker) return '';
         if (MARKER_TYPES[marker.markerType]) return marker.markerType;
-        if (marker.markerType === 'pin') return '';
-        return inferMarkerType(marker.deviceType);
+        if (marker.markerType === 'pin') return ''; // "Other" was chosen on purpose
+        // Markers from before types existed were fire extinguishers.
+        return inferMarkerType(marker.deviceType) || 'fx';
+      };
+
+      // Save a type on markers created before types existed (editors / owners, once).
+      let legacyTypeMigrationDone = false;
+      const migrateLegacyMarkerTypes = async () => {
+        if (legacyTypeMigrationDone || !isWorkspaceEditor() || !markerCloudInitialized) return;
+        legacyTypeMigrationDone = true;
+        let changed = 0;
+        markersByLayout.forEach((markers) => markers.forEach((marker) => {
+          if (MARKER_TYPES[marker.markerType] || marker.markerType === 'pin') return;
+          marker.markerType = markerTypeOf(marker);
+          changed += 1;
+        }));
+        if (!changed) return;
+        const result = await persistMarkersEverywhere();
+        if (result.cloudSaved) {
+          renderMarkers();
+          announce(`Updated ${changed} older ${changed === 1 ? 'marker' : 'markers'} to the new marker icons.`);
+        } else {
+          legacyTypeMigrationDone = false; // try again on the next sync
+        }
       };
 
       // Device ID text that always fits the space it is given.
