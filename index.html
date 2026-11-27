@@ -3,13 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f5f7fb">
+  <meta name="theme-color" content="#0b1220">
   <title>Park View Label | MQuest</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body data-workspace-role="guest">
   <div class="app-shell">
     <header class="topbar">
+      <button class="sidebar-menu-button" id="sidebarMenuButton" type="button" aria-label="Open menu" aria-controls="appSidebar" aria-expanded="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
       <div class="brand">
         <img src="images/mquestlogo.png" alt="MQuest — Innovate Enable Empower">
         <span class="brand-divider" aria-hidden="true"></span>
@@ -19,27 +22,22 @@
         </div>
       </div>
       <div class="topbar-right">
-        <div class="live-status"><span class="status-dot" aria-hidden="true"></span>Workspace ready</div>
-        <div class="live-users" id="liveUsers" hidden>
-          <button class="live-users-button" id="liveUsersButton" type="button" aria-expanded="false" aria-haspopup="dialog">
+        <div class="sync-status" id="syncStatus" role="status" aria-live="off" data-state="connecting">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="syncStatusText">Connecting…</span>
+        </div>
+        <div class="live-users signed-in-only" id="liveUsers">
+          <button class="live-users-button" id="liveUsersButton" type="button" aria-expanded="false" aria-controls="liveUsersPopover" aria-label="Live users">
             <span class="live-users-dot" aria-hidden="true"></span>
-            <span class="live-users-label">Online</span>
             <strong id="liveUserCount">0</strong>
+            <span class="live-users-label">live</span>
           </button>
           <div class="live-users-popover" id="liveUsersPopover" role="dialog" aria-labelledby="liveUsersTitle" hidden>
             <div class="live-users-heading">
-              <strong id="liveUsersTitle">Live users</strong>
-              <span id="liveUsersSubtitle">Signed-in users</span>
+              <strong id="liveUsersTitle">Live now</strong>
+              <span id="liveUsersSubtitle"></span>
             </div>
-            <ul class="live-users-list" id="liveUsersList">
-              <li class="live-users-empty">No signed-in users online.</li>
-            </ul>
-            <div class="live-users-guests" id="liveUsersGuests" hidden>
-              <div class="live-users-guest-heading">Guests</div>
-              <ul class="live-users-guest-list" id="liveUsersGuestList">
-                <li class="live-users-empty">No guests online.</li>
-              </ul>
-            </div>
+            <div class="live-users-body" id="liveUsersBody"></div>
           </div>
         </div>
         <div class="topbar-clock" aria-label="Current date and time">
@@ -61,71 +59,115 @@
     </header>
 
     <div class="app-body">
-      <aside class="app-sidebar" aria-label="Main navigation">
-        <div class="sidebar-nav-group">
-          <div class="sidebar-section-label">Workspace</div>
-          <div class="app-nav-item" aria-current="page">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9v11h13V9M9.5 20v-6h5v6"/></svg>
-            <span class="app-nav-copy">
-              <span class="app-nav-title">Project</span>
-              <span class="app-nav-project" id="sidebarProjectName">Park View Label</span>
-            </span>
-            <span class="app-nav-indicator" aria-hidden="true"></span>
-          </div>
+      <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
+      <aside class="app-sidebar" id="appSidebar" aria-label="Main navigation">
+        <div class="sidebar-scroll">
+          <section class="sidebar-section" aria-labelledby="projectsHeading">
+            <div class="sidebar-section-head">
+              <span class="sidebar-section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
+              <h2 class="sidebar-section-label" id="projectsHeading">Projects</h2>
+              <button class="sidebar-add editor-only" id="newProjectButton" type="button" aria-label="New project" title="New project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+            </div>
+            <ul class="sidebar-list" id="projectList" aria-label="Projects"></ul>
+          </section>
+
+          <section class="sidebar-section" aria-labelledby="layoutsHeading">
+            <div class="sidebar-section-head">
+              <span class="sidebar-section-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg></span>
+              <h2 class="sidebar-section-label" id="layoutsHeading">Layouts</h2>
+              <span class="sidebar-count" id="layoutCount">0</span>
+              <input id="fileInput" type="file" accept="image/*" multiple aria-label="Add layout images">
+              <label class="sidebar-add editor-only" for="fileInput" title="Add layout" aria-label="Add layout"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></label>
+            </div>
+            <div class="layout-list" id="layoutList"></div>
+          </section>
+
+          <nav class="sidebar-section sidebar-tools" aria-label="Tools">
+            <h2 class="sidebar-section-label sidebar-tools-label">Tools</h2>
+            <button class="nav-tool" type="button" data-panel="devices" aria-controls="sidePanel" aria-expanded="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2"/></svg>
+              <span class="nav-label">Devices</span>
+            </button>
+            <button class="nav-tool" type="button" data-panel="inspections" aria-controls="sidePanel" aria-expanded="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4m8-4v4"/></svg>
+              <span class="nav-label">Inspection schedule</span>
+            </button>
+            <button class="nav-tool" type="button" data-panel="activity" aria-controls="sidePanel" aria-expanded="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+              <span class="nav-label">Activity log</span>
+            </button>
+            <button class="nav-tool" type="button" data-panel="reports" aria-controls="sidePanel" aria-expanded="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg>
+              <span class="nav-label">Reports</span>
+            </button>
+            <button class="nav-tool" type="button" data-panel="users" aria-controls="sidePanel" aria-expanded="false"  data-owner-only>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/></svg>
+              <span class="nav-label">Users</span>
+            </button>
+          </nav>
         </div>
+
         <div class="sidebar-footer">
+            <button class="nav-tool" type="button" data-panel="settings" aria-controls="sidePanel" aria-expanded="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+              <span class="nav-label">Settings &amp; Help</span>
+            </button>
           <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch to dark mode" aria-pressed="false">
             <span class="theme-toggle-icon" aria-hidden="true">
               <svg class="theme-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg>
               <svg class="theme-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.9 13A8.5 8.5 0 0 1 11 3.1 8.5 8.5 0 1 0 20.9 13Z"/></svg>
             </span>
-            <span id="themeToggleLabel">Light mode</span>
+            <span class="nav-label" id="themeToggleLabel">Light mode</span>
             <span class="theme-switch" aria-hidden="true"><span></span></span>
+          </button>
+          <button class="sidebar-collapse" id="sidebarCollapse" type="button" aria-label="Collapse sidebar" aria-pressed="false">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/><path d="M20 4v16"/></svg>
+            <span class="nav-label">Collapse</span>
           </button>
         </div>
       </aside>
 
-      <main class="workspace">
-      <section class="page-heading" aria-labelledby="pageTitle">
-        <div>
-          <p class="eyebrow">Project workspace</p>
-          <div class="project-title-row">
-            <h1 id="pageTitle">Park View Label</h1>
-            <button class="project-rename" id="projectRename" type="button" aria-label="Rename Park View Label" title="Rename project">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg>
-            </button>
-            <button class="project-delete" id="projectDelete" type="button" aria-label="Delete Park View Label" title="Delete project">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M5.5 7l1 14h13l1-14M9 7V4h6v3"/></svg>
-            </button>
+      <section class="side-panel" id="sidePanel" hidden aria-labelledby="sidePanelTitle" role="dialog">
+        <header class="side-panel-head">
+          <div>
+            <p class="side-panel-eyebrow" id="sidePanelEyebrow">Tools</p>
+            <h2 id="sidePanelTitle">Devices</h2>
           </div>
-          <p class="heading-subtitle">Browse, inspect and manage your project drawings.</p>
-        </div>
-        <div class="heading-actions">
-          <label class="project-select-label" for="projectSelect">Project</label>
-          <select id="projectSelect" aria-label="Select project"></select>
-          <button class="add-button secondary" id="newProjectButton" type="button">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 10v6m-3-3h6"/></svg>
-            New project
-          </button>
-          <input id="fileInput" type="file" accept="image/*" multiple aria-label="Add layout images">
-          <label class="add-button" for="fileInput">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-            Add layout
-          </label>
-        </div>
+          <button class="side-panel-close" id="sidePanelClose" type="button" aria-label="Close panel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        </header>
+        <div class="side-panel-body" id="sidePanelBody"></div>
       </section>
 
-      <section class="content-grid" aria-label="Park View layout viewer">
-        <section class="viewer-card" aria-label="Layout image">
+      <main class="workspace">
+        <section class="page-heading" aria-label="Location">
+          <nav class="breadcrumb" aria-label="Breadcrumb">
+            <ol>
+              <li><button class="breadcrumb-link" id="breadcrumbProjects" type="button">Projects</button></li>
+              <li class="breadcrumb-project">
+                <h1 id="pageTitle">Park View Label</h1>
+                <button class="project-rename editor-only" id="projectRename" type="button" aria-label="Rename project" title="Rename project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/></svg></button>
+                <button class="project-delete editor-only" id="projectDelete" type="button" aria-label="Delete project" title="Delete project"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M5.5 7l1 14h13l1-14M9 7V4h6v3"/></svg></button>
+              </li>
+              <li class="breadcrumb-current" aria-current="page"><span id="breadcrumbLayout">Layout 1</span></li>
+            </ol>
+          </nav>
+        </section>
+
+        <section class="viewer-card" aria-label="Layout viewer">
           <div class="viewer-toolbar">
             <div class="sheet-heading">
-              <span class="sheet-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H20v15H5.5A1.5 1.5 0 0 0 4 20.5z"/><path d="M4 5.5v15M8 8h8M8 11h8M8 14h5"/></svg>
-              </span>
-              <div>
+              <span class="sheet-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></svg></span>
+              <div class="sheet-copy">
                 <div class="sheet-title" id="sheetTitle">Layout 1</div>
                 <div class="sheet-type" id="sheetType">Project drawing</div>
               </div>
+            </div>
+            <div class="device-search" id="deviceSearch">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+              <input id="deviceSearchInput" type="search" placeholder="Find device ID…" autocomplete="off" spellcheck="false"
+                role="combobox" aria-expanded="false" aria-controls="deviceSearchResults" aria-autocomplete="list" aria-label="Find a device by ID or name">
+              <kbd class="device-search-kbd" aria-hidden="true">/</kbd>
+              <ul class="device-search-results" id="deviceSearchResults" role="listbox" hidden></ul>
             </div>
             <div class="sheet-counter" id="sheetCounter" aria-live="polite">01 / 06</div>
           </div>
@@ -135,6 +177,7 @@
             <div class="stage-shade" aria-hidden="true"></div>
             <div class="marker-layer" id="markerLayer" aria-label="Layout markers"></div>
             <div class="presence-layer" id="presenceLayer" aria-hidden="true"></div>
+            <div class="marker-legend" id="markerLegend" role="group" aria-label="Marker types on this layout" hidden></div>
             <div class="zoom-controls" aria-label="Image zoom controls">
               <button class="icon-button marker-toggle" id="markerToggle" type="button" aria-label="Place marker" aria-pressed="false" title="Place marker">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>
@@ -156,13 +199,20 @@
             </div>
             <form class="marker-editor" id="markerEditor" hidden aria-label="Device details">
               <div class="marker-editor-heading">
-                <div>
-                  <h2 id="markerEditorTitle">Add a marker</h2>
-                  <p>Enter details for this device.</p>
+                <div class="marker-editor-title-group">
+                  <span class="marker-editor-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.6"/></svg>
+                  </span>
+                  <div class="marker-editor-title-copy">
+                    <h2 id="markerEditorTitle">Add a marker</h2>
+                    <p>Enter details for this device.</p>
+                  </div>
                 </div>
                 <div class="marker-editor-controls">
                   <button class="marker-edit" id="markerEdit" type="button" hidden>Edit marker</button>
-                  <button class="marker-close" id="markerClose" type="button" aria-label="Close marker form">&times;</button>
+                  <button class="marker-close" id="markerClose" type="button" aria-label="Close marker form" title="Close">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+                  </button>
                 </div>
               </div>
               <div class="marker-editor-content">
@@ -174,6 +224,10 @@
                   </section>
                 </div>
                 <div class="marker-edit-fields" id="markerEditFields">
+                  <fieldset class="marker-type-picker">
+                    <legend>Marker type</legend>
+                    <div class="marker-type-options" id="markerTypeOptions" role="radiogroup" aria-label="Marker type"></div>
+                  </fieldset>
                   <label class="marker-field">
                     <span>Device ID</span>
                     <input id="markerDeviceId" name="deviceId" type="text" inputmode="numeric" placeholder="Enter device ID">
@@ -183,16 +237,16 @@
                     <input id="markerProduct" name="product" type="text" placeholder="Enter device name">
                   </label>
                   <label class="marker-field">
-                    <span>Device Type</span>
-                    <input id="markerDeviceType" name="deviceType" type="text" placeholder="Enter device type">
-                  </label>
-                  <label class="marker-field">
                     <span>Floor Level</span>
                     <input id="markerFloorLevel" name="floorLevel" type="text" placeholder="Enter floor level">
                   </label>
                   <label class="marker-field">
                     <span>Venue</span>
                     <input id="markerLocation" name="location" type="text" placeholder="Enter venue">
+                  </label>
+                  <label class="marker-field">
+                    <span>Device Type</span>
+                    <input id="markerDeviceType" name="deviceType" type="text" placeholder="Enter device type">
                   </label>
                   <label class="marker-field">
                     <span>Next Inspection Date</span>
@@ -224,7 +278,6 @@
             <button class="nav-arrow next" id="nextLayout" type="button" aria-label="Next layout">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
             </button>
-            <div class="image-caption" id="imageCaption">Park View · Layout 1</div>
           </div>
 
           <div class="viewer-footer">
@@ -232,23 +285,14 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 11V5a2 2 0 0 1 4 0v5-7a2 2 0 0 1 4 0v8-6a2 2 0 0 1 4 0v9a7 7 0 0 1-7 7h-1.5a6 6 0 0 1-4.8-2.4L3.8 15a2 2 0 0 1 3.2-2.4L9 15"/></svg>
               Pinch or scroll to zoom · Drag to pan
             </div>
-            <span class="keyboard-hint">← → to navigate</span>
+            <span class="keyboard-hint"><kbd>/</kbd> find device · <kbd>←</kbd> <kbd>→</kbd> switch layout</span>
           </div>
         </section>
 
-        <aside class="sidebar-card" aria-label="Layout list">
-          <div class="sidebar-heading">
-            <h2>All layouts</h2>
-            <span class="count-badge" id="layoutCount">06 sheets</span>
-          </div>
-          <div class="layout-list" id="layoutList"></div>
-          <div class="sidebar-bottom">
-            <div class="project-label">Current project</div>
-            <div class="project-name">Park View</div>
-            <div class="project-location">Singapore · Site plans</div>
-          </div>
-        </aside>
-      </section>
+        <section class="layout-strip-wrap" aria-labelledby="layoutStripTitle">
+          <h2 class="layout-strip-title" id="layoutStripTitle">Layouts</h2>
+          <div class="layout-strip" id="layoutStrip"></div>
+        </section>
       </main>
     </div>
   </div>
@@ -299,29 +343,77 @@
         </div>
         <p class="login-eyebrow">WELCOME TO MQUEST</p>
         <h2 id="loginTitle">Sign in to your workspace</h2>
-        <p class="login-intro">Enter your MQuest account details to continue to your project dashboard.</p>
+        <p class="login-intro" id="loginIntro">Enter your MQuest account details to continue to your project dashboard.</p>
         <form class="login-form" id="loginForm">
           <label for="loginUsername">Username</label>
           <div class="login-input-wrap">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
             <input id="loginUsername" name="username" type="email" placeholder="name@company.com" autocomplete="username" required>
           </div>
-          <label for="loginPassword">Password</label>
-          <div class="login-input-wrap">
+          <div class="login-label-row">
+            <label for="loginPassword">Password</label>
+            <button class="login-link" id="forgotPasswordButton" type="button">Forgot password?</button>
+          </div>
+          <div class="login-input-wrap has-toggle">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg>
             <input id="loginPassword" name="password" type="password" placeholder="Enter your password" autocomplete="current-password" required>
+            <button class="password-toggle" type="button" data-password-toggle="loginPassword" aria-label="Show password" aria-pressed="false">
+              <svg class="eye-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg class="eye-closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+            </button>
           </div>
+          <p class="login-hint" id="capsLockHint" hidden>Caps Lock is on</p>
           <p class="login-feedback" id="loginFeedback" role="alert" aria-live="polite" hidden></p>
           <button class="login-submit" id="loginSubmit" type="submit">
             <span id="loginSubmitLabel">Login</span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
           </button>
         </form>
-        <div class="login-separator"><span>OR</span></div>
-        <button class="continue-guest" id="continueAsGuest" type="button">
-          Continue as a Guest
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
-        </button>
+        <form class="login-form" id="resetRequestForm" hidden novalidate>
+          <label for="resetEmail">Email</label>
+          <div class="login-input-wrap">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+            <input id="resetEmail" name="email" type="email" placeholder="name@company.com" autocomplete="username" required>
+          </div>
+          <p class="login-feedback" id="resetRequestFeedback" role="alert" aria-live="polite" hidden></p>
+          <button class="login-submit" id="resetRequestSubmit" type="submit">
+            <span>Send reset link</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+          </button>
+          <button class="login-back" type="button" data-login-back>Back to sign in</button>
+        </form>
+        <form class="login-form" id="newPasswordForm" hidden novalidate>
+          <label for="newPassword">New password</label>
+          <div class="login-input-wrap has-toggle">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg>
+            <input id="newPassword" name="newPassword" type="password" placeholder="At least 8 characters" autocomplete="new-password" minlength="8" required>
+            <button class="password-toggle" type="button" data-password-toggle="newPassword" aria-label="Show password" aria-pressed="false">
+              <svg class="eye-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg class="eye-closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+            </button>
+          </div>
+          <label for="confirmPassword">Confirm new password</label>
+          <div class="login-input-wrap has-toggle">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></svg>
+            <input id="confirmPassword" name="confirmPassword" type="password" placeholder="Type it again" autocomplete="new-password" minlength="8" required>
+            <button class="password-toggle" type="button" data-password-toggle="confirmPassword" aria-label="Show password" aria-pressed="false">
+              <svg class="eye-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg class="eye-closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a9.8 9.8 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+            </button>
+          </div>
+          <p class="login-feedback" id="newPasswordFeedback" role="alert" aria-live="polite" hidden></p>
+          <button class="login-submit" id="newPasswordSubmit" type="submit">
+            <span>Save new password</span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+          </button>
+        </form>
+        <div class="login-guest-options" id="loginGuestOptions">
+          <div class="login-separator"><span>OR</span></div>
+          <button class="continue-guest" id="continueAsGuest" type="button">
+            Continue as a Guest
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+          </button>
+        </div>
         <p class="login-help">Need an account? Contact your MQuest workspace administrator.</p>
       </div>
     </section>
@@ -395,4 +487,4 @@
   <script src="supabase-config.js" defer></script>
   <script src="script.js" defer></script>
 </body>
-</html>
+</html>
