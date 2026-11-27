@@ -3964,3 +3964,206 @@ body[data-workspace-role="editor"] .app-sidebar .layout-row:hover .layout-item-c
 .panel-button.danger:hover { border-color: var(--alert); color: #fff; background: var(--alert); }
 .panel-button:disabled { opacity: .6; cursor: wait; transform: none; }
 body[data-theme="dark"] .panel-button.danger { border-color: #5a2328; color: #ff9a9d; background: #2a1418; }
+
+/* =====================================================================
+   MARKER TYPES — FX extinguisher · SMD detector · EMT twin lamp · EX exit
+   ===================================================================== */
+.type-pin { --pin-color: #1a73e8; --pin-color-dark: #0b4fb3; --mk-w: 38; --mk-ratio: 1.25; }
+.type-fx  { --pin-color: #d92d3a; --pin-color-dark: #a51d29; --mk-w: 44; --mk-ratio: 1.4167; }
+.type-smd { --pin-color: #1a73e8; --pin-color-dark: #0b4fb3; --mk-w: 46; --mk-ratio: 1.25; }
+.type-emt { --pin-color: #16233f; --pin-color-dark: #0b1220; --mk-w: 48; --mk-ratio: 1.1923; }
+.type-ex  { --pin-color: #10975c; --pin-color-dark: #0b6e43; --mk-w: 62; --mk-ratio: .78125; }
+
+/* Size every marker from its own proportions */
+.map-marker { --pin-unit: 1px; width: calc(var(--mk-w) * var(--pin-unit)); height: calc(var(--mk-w) * var(--mk-ratio) * var(--pin-unit)); }
+@media (max-width: 850px) { .map-marker { --pin-unit: .9px; } }
+@media (max-width: 480px) { .map-marker { --pin-unit: .84px; } }
+.map-marker.is-typed.is-active { --pin-color: var(--pin-color-dark); }
+.map-marker.is-typed::before { width: 54%; margin-left: -27%; }
+.map-marker.type-ex::before { width: 36%; margin-left: -18%; }
+
+/* Shape parts */
+.mk-fill { fill: var(--pin-color); transition: fill .2s ease; }
+.mk-outline { stroke: #fff; stroke-width: 2.2; stroke-linejoin: round; }
+.mk-label { fill: #fff; }
+.mk-ink { fill: #0b1220; }
+.mk-ink-line { fill: none; stroke: #0b1220; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; }
+.mk-shine { fill: #fff; opacity: .28; }
+.mk-vents { fill: none; stroke: #fff; stroke-width: 1.6; stroke-dasharray: 1.6 2.6; opacity: .55; }
+.mk-lens { fill: #dff0ff; stroke: #9fd0ff; stroke-width: 1; }
+.mk-frame { fill: none; stroke: #fff; stroke-width: 1.2; opacity: .55; }
+.mk-door { fill: none; stroke: #fff; stroke-width: 1.6; }
+.mk-knob { fill: #fff; }
+.mk-arrow { fill: none; stroke: #fff; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.mk-code, .mk-id {
+  font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.01em;
+  pointer-events: none;
+  user-select: none;
+}
+.mk-code { fill: var(--pin-color-dark); }
+.mk-id { fill: #0b1220; font-weight: 800; }
+.mk-ex .mk-code, .mk-ex .mk-id { fill: #fff; }
+.map-marker:hover .mk-fill { fill: var(--pin-color-dark); }
+.map-marker.is-typed:focus-visible .mk-outline { stroke: #ffd166; stroke-width: 3.2; }
+/* the twin lamps glow when the marker is open */
+.map-marker.type-emt.is-active .mk-lens { fill: #fff7c2; stroke: #ffe066; filter: drop-shadow(0 0 2px #ffe066); }
+
+/* Small icon used in buttons, the legend and lists */
+.mk-swatch { display: inline-grid; flex: 0 0 auto; place-items: center; }
+.mk-swatch .mk-svg { display: block; width: auto; height: 26px; overflow: visible; }
+.mk-swatch.type-ex .mk-svg { height: 21px; }
+
+/* ---------- Legend on the plan ---------- */
+.marker-legend {
+  position: absolute;
+  z-index: 3;
+  bottom: 12px;
+  left: 12px;
+  display: flex;
+  max-width: calc(100% - 24px);
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid rgb(255 255 255 / 70%);
+  border-radius: 14px;
+  background: rgb(255 255 255 / 86%);
+  box-shadow: var(--shadow-md);
+  backdrop-filter: saturate(160%) blur(10px);
+  animation: itemRise .4s var(--ease-out) both;
+}
+.marker-legend[hidden] { display: none; }
+.legend-chip {
+  display: inline-flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px 3px 5px;
+  border: 1px solid #e3eaf3;
+  border-radius: 10px;
+  color: var(--navy);
+  background: #fff;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: opacity .2s ease, transform .2s var(--ease-spring), border-color .2s ease, background .2s ease;
+}
+.legend-chip:hover { border-color: var(--pin-color); transform: translateY(-1px); }
+.legend-chip:focus-visible { outline: 3px solid #86c7ff; outline-offset: 2px; }
+.legend-chip .mk-swatch .mk-svg { height: 22px; }
+.legend-chip.type-ex .mk-swatch .mk-svg { height: 17px; }
+.legend-code { color: var(--pin-color-dark); letter-spacing: .02em; }
+.legend-count { min-width: 20px; padding: 1px 6px; border-radius: 99px; color: #fff; background: var(--pin-color); font-size: 10.5px; text-align: center; }
+.legend-chip.is-off { background: #f1f4f8; opacity: .55; }
+.legend-chip.is-off .mk-swatch { filter: grayscale(1); }
+.legend-chip.is-off .legend-code { text-decoration: line-through; }
+
+/* ---------- Marker type picker in the Add / Edit form ---------- */
+.marker-type-picker { min-width: 0; margin: 0 0 2px; padding: 0; border: 0; }
+.marker-type-picker legend { margin-bottom: 8px; padding: 0; color: #4a5a70; font-size: 10px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
+.marker-type-options { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.marker-type-option {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  justify-items: center;
+  gap: 6px;
+  padding: 10px 4px 9px;
+  border: 1.5px solid #e3eaf3;
+  border-radius: 14px;
+  color: var(--navy);
+  background: #fff;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .18s ease, box-shadow .18s ease, transform .22s var(--ease-spring), background .18s ease;
+}
+.marker-type-option .mk-swatch { height: 40px; }
+.marker-type-option .mk-swatch .mk-svg { height: 38px; transition: transform .3s var(--ease-spring); }
+.marker-type-option.type-ex .mk-swatch .mk-svg { height: 30px; }
+.marker-type-option:hover { border-color: var(--pin-color); transform: translateY(-2px); box-shadow: 0 8px 18px rgb(11 18 32 / 8%); }
+.marker-type-option:hover .mk-svg { transform: scale(1.08) rotate(-3deg); }
+.marker-type-option:focus-visible { outline: 3px solid #86c7ff; outline-offset: 2px; }
+.marker-type-option.is-selected {
+  border-color: var(--pin-color);
+  background: color-mix(in srgb, var(--pin-color) 8%, #fff);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pin-color) 20%, transparent), 0 8px 18px rgb(11 18 32 / 8%);
+}
+.marker-type-option.is-selected::after {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  width: 16px;
+  height: 16px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--pin-color);
+  content: "✓";
+  font-size: 10px;
+  font-weight: 900;
+  animation: iconPop .35s var(--ease-spring) both;
+}
+.marker-type-text { display: grid; min-width: 0; gap: 1px; }
+.marker-type-text strong { color: var(--pin-color-dark); font-size: 12px; letter-spacing: .03em; }
+.marker-type-text small { overflow: hidden; color: var(--muted); font-size: 9.5px; font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+@media (max-width: 520px) {
+  .marker-type-options { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* Popup header icon shows the device's own shape */
+.marker-editor-icon.has-type { border: 1px solid #e6edf5; background: #fff; box-shadow: 0 6px 14px rgb(11 18 32 / 10%); }
+.marker-editor-icon.has-type .mk-svg { width: auto; height: 28px; }
+.marker-editor-icon.type-ex .mk-svg { height: 22px; }
+
+/* ---------- Type-coloured device badges in panels and search ---------- */
+.device-badge {
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--pin-color) 85%, #fff), var(--pin-color-dark));
+  box-shadow: 0 4px 10px color-mix(in srgb, var(--pin-color) 35%, transparent);
+  line-height: 1.05;
+}
+.device-badge-code { font-size: 8.5px; font-weight: 800; letter-spacing: .06em; opacity: .85; }
+.device-badge-id { font-size: 13px; }
+.device-search-option .device-badge-id { font-size: 12px; }
+.device-badge.type-ex { border-radius: 9px; }
+.device-badge.type-fx { border-radius: 12px 12px 16px 16px; }
+.device-badge.type-emt { border-radius: 10px; }
+
+/* Dark mode */
+body[data-theme="dark"] .marker-legend { border-color: #263350; background: rgb(18 26 41 / 88%); }
+body[data-theme="dark"] .legend-chip { border-color: #263350; color: #e7edf7; background: #172136; }
+body[data-theme="dark"] .legend-chip.is-off { background: #0f1624; }
+body[data-theme="dark"] .legend-code { color: color-mix(in srgb, var(--pin-color) 55%, #fff); }
+body[data-theme="dark"] .marker-type-option { border-color: #263350; color: #e7edf7; background: #172136; }
+body[data-theme="dark"] .marker-type-option.is-selected { background: color-mix(in srgb, var(--pin-color) 18%, #172136); }
+body[data-theme="dark"] .marker-type-text strong { color: color-mix(in srgb, var(--pin-color) 55%, #fff); }
+body[data-theme="dark"] .marker-type-picker legend { color: #c4cfdf; }
+body[data-theme="dark"] .marker-editor-icon.has-type { border-color: #263350; background: #e9eff7; }
+
+@media (max-width: 620px) {
+  .marker-legend { bottom: 8px; left: 8px; gap: 4px; padding: 4px; border-radius: 12px; }
+  .legend-chip { min-height: 28px; gap: 4px; padding: 2px 7px 2px 4px; font-size: 10.5px; }
+  .legend-chip .mk-swatch .mk-svg { height: 18px; }
+  .legend-chip.type-ex .mk-swatch .mk-svg { height: 14px; }
+}
+
+/* Small icons are laid out normally (not stretched over a marker button) */
+.mk-swatch .map-marker-pin,
+.marker-editor-icon .map-marker-pin { position: static; inset: auto; display: block; width: auto; max-width: 100%; transform: none; }
+.marker-editor-icon.has-type { overflow: hidden; }
+
+@media (max-width: 620px) {
+  .marker-legend { right: auto; max-width: calc(100% - 16px); flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .marker-legend::-webkit-scrollbar { display: none; }
+  .legend-chip { flex: 0 0 auto; min-height: 26px; padding: 2px 6px 2px 3px; }
+  .legend-chip .legend-code { display: none; }
+  .legend-count { min-width: 17px; padding: 0 5px; font-size: 10px; }
+}

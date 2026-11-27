@@ -1018,6 +1018,7 @@
       };
 
       const cloudMarkerData = (marker) => ({
+        ...(marker.markerType ? { markerType: marker.markerType } : {}),
         id: marker.id,
         x: marker.x,
         y: marker.y,
@@ -1372,6 +1373,211 @@
         };
       };
 
+      // =====================================================================
+      // Marker types — each device type has its own shape, colour and code.
+      // Change names / codes here; the shapes are drawn in markerSvgMarkup().
+      // =====================================================================
+      const MARKER_TYPES = {
+        fx: { code: 'FX', label: 'Fire Extinguisher', shape: 'Extinguisher' },
+        ex: { code: 'EX', label: 'Exit Sign', shape: 'Exit sign' },
+        smd: { code: 'SMD', label: 'Emergency Detector Light', shape: 'Detector' },
+        emt: { code: 'EMT', label: 'Emergency Train Light', shape: 'Twin lamp' }
+      };
+      const MARKER_TYPE_ORDER = ['fx', 'ex', 'smd', 'emt'];
+      const lastMarkerTypeKey = 'mquest-parkview-last-marker-type';
+
+      // Older markers have no type yet: work it out from their "Device Type" text.
+      const inferMarkerType = (text) => {
+        const t = String(text || '').toLowerCase();
+        if (/extinguish|\bfx\b/.test(t)) return 'fx';
+        if (/\bexit\b|\bex\b/.test(t)) return 'ex';
+        if (/detector|smoke|\bsmd\b/.test(t)) return 'smd';
+        if (/\bemt\b|emergency|train light|twin/.test(t)) return 'emt';
+        return '';
+      };
+      const markerTypeOf = (marker) => {
+        if (!marker) return '';
+        if (MARKER_TYPES[marker.markerType]) return marker.markerType;
+        if (marker.markerType === 'pin') return '';
+        return inferMarkerType(marker.deviceType);
+      };
+
+      // Device ID text that always fits the space it is given.
+      const markerIdText = (id, x, y, maxWidth, baseSize) => {
+        if (!id) return '';
+        const size = id.length <= 2 ? baseSize * 1.12 : id.length === 3 ? baseSize : baseSize * 0.92;
+        const natural = id.length * size * 0.6;
+        const fit = natural > maxWidth || id.length >= 5
+          ? ` textLength="${maxWidth}" lengthAdjust="spacingAndGlyphs"` : '';
+        return `<text class="mk-id" x="${x}" y="${y}" font-size="${size.toFixed(1)}" text-anchor="middle" dominant-baseline="central"${fit}>${escapeHtml(id)}</text>`;
+      };
+      const markerCodeText = (code, x, y, size, maxWidth) =>
+        `<text class="mk-code" x="${x}" y="${y}" font-size="${size}" text-anchor="middle" dominant-baseline="central"${code.length >= 3 ? ` textLength="${maxWidth}" lengthAdjust="spacingAndGlyphs"` : ''}>${code}</text>`;
+
+      // SVG for a marker. mini = small icon (code only) for buttons and legends.
+      const markerSvgMarkup = (type, deviceId = '', { mini = false } = {}) => {
+        const id = mini ? '' : String(deviceId || '').trim();
+        const svg = (viewBox, body) =>
+          `<svg class="map-marker-pin mk-svg mk-${type || 'pin'}" viewBox="${viewBox}" aria-hidden="true" focusable="false">${body}</svg>`;
+        switch (type) {
+          case 'fx': // fire extinguisher: valve, handle, nozzle, body with label
+            return svg('0 0 48 68', `
+              <path class="mk-ink-line" d="M18 8.5H11.5L7 13"/>
+              <path class="mk-ink-line" d="M23 5.5H35.5L41 2.5"/>
+              <rect class="mk-ink" x="17.5" y="4" width="13" height="10" rx="2.5"/>
+              <rect class="mk-fill mk-outline" x="6" y="12" width="36" height="54" rx="12"/>
+              <rect class="mk-shine" x="9.5" y="17" width="3.2" height="42" rx="1.6"/>
+              <rect class="mk-label" x="11" y="21" width="26" height="36" rx="6"/>
+              ${id ? markerCodeText('FX', 24, 30.5, 11, 18) + markerIdText(id, 24, 46.5, 22, 10.5)
+                   : markerCodeText('FX', 24, 39, 13, 20)}`);
+          case 'smd': // round ceiling detector with vent ring and pointer
+            return svg('0 0 48 60', `
+              <path class="mk-fill mk-outline" d="M15.5 41 24 58.5 32.5 41Z"/>
+              <circle class="mk-fill mk-outline" cx="24" cy="24" r="22"/>
+              <circle class="mk-vents" cx="24" cy="24" r="19.3"/>
+              <circle class="mk-label" cx="24" cy="24" r="15.8"/>
+              ${id ? markerCodeText('SMD', 24, 18.4, 8.4, 17) + markerIdText(id, 24, 29.8, 25, 10.5)
+                   : markerCodeText('SMD', 24, 24.5, 10.5, 22)}`);
+          case 'emt': // twin-lamp emergency light
+            return svg('0 0 52 62', `
+              <circle class="mk-fill mk-outline" cx="13" cy="12" r="9.5"/>
+              <circle class="mk-fill mk-outline" cx="39" cy="12" r="9.5"/>
+              <circle class="mk-lens" cx="13" cy="11" r="5"/>
+              <circle class="mk-lens" cx="39" cy="11" r="5"/>
+              <path class="mk-fill mk-outline" d="M19 50 26 61 33 50Z"/>
+              <rect class="mk-fill mk-outline" x="3" y="16" width="46" height="36" rx="9"/>
+              <rect class="mk-label" x="8" y="21" width="36" height="26" rx="5.5"/>
+              ${id ? markerCodeText('EMT', 26, 29.3, 8.8, 19) + markerIdText(id, 26, 40.2, 30, 10.5)
+                   : markerCodeText('EMT', 26, 34.5, 11, 25)}`);
+          case 'ex': // exit sign board with door and arrow
+            return svg('0 0 64 50', `
+              <path class="mk-fill mk-outline" d="M26.5 36 32 48.5 37.5 36Z"/>
+              <rect class="mk-fill mk-outline" x="2" y="2" width="60" height="36" rx="7"/>
+              <rect class="mk-frame" x="5.5" y="5.5" width="53" height="29" rx="4.5"/>
+              <rect class="mk-door" x="9.5" y="11.5" width="8" height="17" rx="1.2"/>
+              <circle class="mk-knob" cx="15.6" cy="20.5" r="1.1"/>
+              <path class="mk-arrow" d="M46.5 14.5 52.5 20 46.5 25.5M41 20H52"/>
+              ${id ? markerCodeText('EX', 29.5, 14.5, 11, 16) + markerIdText(id, 29.5, 27.6, 22, 10)
+                   : markerCodeText('EX', 29.5, 20.5, 13.5, 18)}`);
+          default: { // classic location pin
+            const pinId = id ? (() => {
+              const sizes = [17, 17, 15, 12.5, 10.5];
+              const fit = id.length >= 4 ? ` textLength="${id.length === 4 ? 26 : 28}" lengthAdjust="spacingAndGlyphs"` : '';
+              return `<text class="map-marker-label" x="24" y="23.6" font-size="${sizes[id.length] || 10.5}" text-anchor="middle" dominant-baseline="central"${fit}>${escapeHtml(id)}</text>`;
+            })() : `<circle class="map-marker-dot" cx="24" cy="23" r="5"/>`;
+            return svg('0 0 48 60', `
+              <path class="map-marker-body" d="M24 1.5C12 1.5 2.5 11 2.5 23c0 14.6 18.4 31.9 20.4 33.7a1.6 1.6 0 0 0 2.2 0C27.1 54.9 45.5 37.6 45.5 23 45.5 11 36 1.5 24 1.5Z"/>
+              <circle class="map-marker-core" cx="24" cy="23" r="16.5"/>
+              ${pinId}`);
+          }
+        }
+      };
+      // Small coloured icon (used in buttons, the legend and lists).
+      const markerTypeIcon = (type) =>
+        `<span class="mk-swatch type-${type || 'pin'}" aria-hidden="true">${markerSvgMarkup(type, '', { mini: true })}</span>`;
+
+      // Types hidden from the plan using the legend.
+      const hiddenMarkerTypes = new Set();
+
+      // Legend on the plan: one chip per type on this layout, tap to hide/show.
+      const renderMarkerLegend = () => {
+        const legend = document.getElementById('markerLegend');
+        const markers = layouts.length ? getCurrentMarkers() : [];
+        const counts = new Map();
+        markers.forEach((marker) => {
+          const type = markerTypeOf(marker) || 'pin';
+          counts.set(type, (counts.get(type) || 0) + 1);
+        });
+        legend.replaceChildren();
+        legend.hidden = counts.size === 0;
+        [...MARKER_TYPE_ORDER, 'pin'].forEach((type) => {
+          if (!counts.has(type)) return;
+          const definition = MARKER_TYPES[type] || { code: 'PIN', label: 'Other markers' };
+          const visible = !hiddenMarkerTypes.has(type);
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = `legend-chip type-${type}${visible ? '' : ' is-off'}`;
+          chip.setAttribute('aria-pressed', String(visible));
+          chip.title = `${visible ? 'Hide' : 'Show'} ${definition.label.toLowerCase()} markers`;
+          chip.innerHTML = `${markerTypeIcon(type === 'pin' ? '' : type)}<span class="legend-code">${definition.code}</span><span class="legend-count">${counts.get(type)}</span>`;
+          chip.addEventListener('click', (event) => {
+            event.stopPropagation();
+            if (hiddenMarkerTypes.has(type)) hiddenMarkerTypes.delete(type);
+            else hiddenMarkerTypes.add(type);
+            renderMarkers();
+          });
+          legend.append(chip);
+        });
+      };
+
+      // ---- Marker type picker (Add / Edit marker form) ----------------------
+      let selectedMarkerType = '';
+      const markerEditorIcon = document.querySelector('.marker-editor-icon');
+      const defaultEditorIconMarkup = markerEditorIcon ? markerEditorIcon.innerHTML : '';
+      const setEditorHeaderIcon = (type) => {
+        if (!markerEditorIcon) return;
+        markerEditorIcon.className = `marker-editor-icon${type ? ` has-type type-${type}` : ''}`;
+        markerEditorIcon.innerHTML = type ? markerSvgMarkup(type, '', { mini: true }) : defaultEditorIconMarkup;
+      };
+
+      // Built once; selecting a type only updates the buttons (keeps keyboard focus).
+      const renderMarkerTypePicker = () => {
+        const box = document.getElementById('markerTypeOptions');
+        if (box.children.length) {
+          box.querySelectorAll('.marker-type-option').forEach((option) => {
+            const selected = option.dataset.type === selectedMarkerType;
+            option.classList.toggle('is-selected', selected);
+            option.setAttribute('aria-checked', String(selected));
+            option.tabIndex = selected ? 0 : -1;
+          });
+          return;
+        }
+        [...MARKER_TYPE_ORDER, ''].forEach((type) => {
+          const definition = MARKER_TYPES[type] || { code: 'PIN', label: 'Other device' };
+          const selected = selectedMarkerType === type;
+          const option = document.createElement('button');
+          option.type = 'button';
+          option.className = `marker-type-option type-${type || 'pin'}${selected ? ' is-selected' : ''}`;
+          option.setAttribute('role', 'radio');
+          option.setAttribute('aria-checked', String(selected));
+          option.tabIndex = selected ? 0 : -1;
+          option.dataset.type = type;
+          option.title = definition.label;
+          option.innerHTML = `${markerTypeIcon(type)}<span class="marker-type-text"><strong>${definition.code}</strong><small>${escapeHtml(definition.label)}</small></span>`;
+          option.addEventListener('click', () => setSelectedMarkerType(type, true));
+          option.addEventListener('keydown', (event) => {
+            const order = [...MARKER_TYPE_ORDER, ''];
+            const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];
+            if (!step) return;
+            event.preventDefault();
+            event.stopPropagation(); // don't let ← / → switch layouts
+            const next = order[(order.indexOf(type) + step + order.length) % order.length];
+            setSelectedMarkerType(next, true);
+            box.querySelector(`[data-type="${next}"]`)?.focus();
+          });
+          box.append(option);
+        });
+      };
+
+      const setSelectedMarkerType = (type, fromUser = false) => {
+        const previous = selectedMarkerType;
+        selectedMarkerType = MARKER_TYPES[type] ? type : '';
+        if (fromUser) {
+          // Fill in "Device Type" for you when it is empty or still the previous type's name.
+          const input = document.getElementById('markerDeviceType');
+          const current = input.value.trim();
+          const previousLabel = MARKER_TYPES[previous] ? MARKER_TYPES[previous].label : '';
+          if (MARKER_TYPES[selectedMarkerType] && (!current || current === previousLabel)) {
+            input.value = MARKER_TYPES[selectedMarkerType].label;
+          } else if (!MARKER_TYPES[selectedMarkerType] && previousLabel && current === previousLabel) {
+            input.value = '';
+          }
+          try { localStorage.setItem(lastMarkerTypeKey, selectedMarkerType || 'pin'); } catch (error) { /* ignore */ }
+        }
+        renderMarkerTypePicker();
+        setEditorHeaderIcon(selectedMarkerType);
+      };
+
       // Records a change in the shared activity log (editors / owners only).
       const logActivity = (action, summary, { project = activeProject, layout = null, marker = null } = {}) => {
         if (!isWorkspaceEditor()) return;
@@ -1413,6 +1619,7 @@
 
 const renderMarkers = () => {
     markerLayer.replaceChildren();
+    renderMarkerLegend();
 
     if (!layouts.length) return;
 
@@ -1420,6 +1627,7 @@ const renderMarkers = () => {
     if (!bounds) return;
 
     getCurrentMarkers().forEach((marker) => {
+        if (hiddenMarkerTypes.has(markerTypeOf(marker) || 'pin')) return;
 
         // Create marker button
         const pin = document.createElement('button');
@@ -1450,57 +1658,21 @@ const renderMarkers = () => {
 
         pin.title = marker.product || marker.location || 'Layout marker';
 
-        // Location pin — the Device ID is drawn inside the SVG so it scales with
-        // the pin and stays exactly centred in the white circle on every device.
-        const svgNS = 'http://www.w3.org/2000/svg';
-        const markerSVG = document.createElementNS(svgNS, 'svg');
-        markerSVG.setAttribute('viewBox', '0 0 48 60');
-        markerSVG.setAttribute('aria-hidden', 'true');
-        markerSVG.classList.add('map-marker-pin');
-
-        const pinShape = document.createElementNS(svgNS, 'path');
-        pinShape.setAttribute('class', 'map-marker-body');
-        pinShape.setAttribute('d', 'M24 1.5C12 1.5 2.5 11 2.5 23c0 14.6 18.4 31.9 20.4 33.7a1.6 1.6 0 0 0 2.2 0C27.1 54.9 45.5 37.6 45.5 23 45.5 11 36 1.5 24 1.5Z');
-
-        const pinCentre = document.createElementNS(svgNS, 'circle');
-        pinCentre.setAttribute('class', 'map-marker-core');
-        pinCentre.setAttribute('cx', '24');
-        pinCentre.setAttribute('cy', '23');
-        pinCentre.setAttribute('r', '16.5');
-
-        markerSVG.append(pinShape, pinCentre);
-
+        // Each device type has its own shape; the Device ID sits inside it,
+        // scales with it and stays centred on every device.
+        const markerType = markerTypeOf(marker);
         const deviceId = String(marker.deviceId ?? '').trim();
-        if (deviceId) {
-          const label = document.createElementNS(svgNS, 'text');
-          label.setAttribute('class', 'map-marker-label');
-          label.setAttribute('x', '24');
-          label.setAttribute('y', '23.6');
-          label.setAttribute('text-anchor', 'middle');
-          label.setAttribute('dominant-baseline', 'central');
-          // Shrink the type as the ID gets longer so it always fits the circle.
-          const fontSizes = [17, 17, 15, 12.5, 10.5];
-          label.setAttribute('font-size', String(fontSizes[deviceId.length] || 10.5));
-          if (deviceId.length >= 4) {
-            label.setAttribute('textLength', deviceId.length === 4 ? '26' : '28');
-            label.setAttribute('lengthAdjust', 'spacingAndGlyphs');
-          }
-          label.textContent = deviceId;
-          markerSVG.append(label);
-        } else {
-          const dot = document.createElementNS(svgNS, 'circle');
-          dot.setAttribute('class', 'map-marker-dot');
-          dot.setAttribute('cx', '24');
-          dot.setAttribute('cy', '23');
-          dot.setAttribute('r', '5');
-          markerSVG.append(dot);
+        pin.classList.add(`type-${markerType || 'pin'}`);
+        if (markerType) {
+          pin.classList.add('is-typed');
+          pin.title = `${MARKER_TYPES[markerType].label}${deviceId ? ` ${deviceId}` : ''}${marker.product ? ` · ${marker.product}` : ''}`;
+          pin.setAttribute('aria-label', `${MARKER_TYPES[markerType].label} marker${deviceId ? `, device ID ${deviceId}` : ''}${marker.product ? `, ${marker.product}` : ''}`);
         }
+        pin.insertAdjacentHTML('beforeend', markerSvgMarkup(markerType, deviceId));
 
         if (!markerMoveMode && marker.id === editingMarkerId && !markerEditor.hidden) {
           pin.classList.add('is-active');
         }
-
-        pin.append(markerSVG);
 
         // Original marker click functionality
         pin.addEventListener('click', (event) => {
@@ -1800,8 +1972,12 @@ const renderMarkers = () => {
         photoLoadToken += 1;
         editingMarkerId = marker.id;
         markerPanelPoint = { x, y };
-        document.getElementById('markerEditorTitle').textContent = 'Marker Details';
-        document.querySelector('.marker-editor-heading p').textContent = 'Device details';
+        const detailsType = markerTypeOf(marker);
+        document.getElementById('markerEditorTitle').textContent = detailsType ? MARKER_TYPES[detailsType].label : 'Marker Details';
+        document.querySelector('.marker-editor-heading p').textContent = detailsType
+          ? `${MARKER_TYPES[detailsType].code}${marker.deviceId ? ` · Device ${marker.deviceId}` : ''}`
+          : 'Device details';
+        setEditorHeaderIcon(detailsType);
         document.getElementById('markerDetailsView').hidden = false;
         document.getElementById('markerEditFields').hidden = true;
         document.getElementById('markerEdit').hidden = false;
@@ -1847,7 +2023,9 @@ const renderMarkers = () => {
         removedMarkerPhotoIds = new Set();
         markerPhotoInput.value = '';
         document.getElementById('markerEditorTitle').textContent = marker ? 'Edit marker' : 'Add a marker';
-        document.querySelector('.marker-editor-heading p').textContent = 'Enter details for this device.';
+        document.querySelector('.marker-editor-heading p').textContent = marker
+          ? 'Change the type or details for this device.'
+          : 'Choose the device type, then enter its details.';
         document.getElementById('markerDetailsView').hidden = true;
         document.getElementById('markerEditFields').hidden = false;
         document.getElementById('markerEdit').hidden = true;
@@ -1860,6 +2038,21 @@ const renderMarkers = () => {
         document.getElementById('markerServiceDate').value = marker ? monthInputValue(marker.serviceDate || '') : '';
         document.getElementById('markerManufacturingDate').value = marker ? monthInputValue(marker.manufacturingDate || '') : '';
         document.getElementById('markerDelete').hidden = !marker;
+        let startType = '';
+        if (marker) {
+          startType = markerTypeOf(marker);
+        } else {
+          try {
+            const saved = localStorage.getItem(lastMarkerTypeKey);
+            startType = saved === null ? 'fx' : (MARKER_TYPES[saved] ? saved : '');
+          } catch (error) { startType = 'fx'; }
+        }
+        selectedMarkerType = startType;
+        if (!marker && MARKER_TYPES[startType]) {
+          document.getElementById('markerDeviceType').value = MARKER_TYPES[startType].label;
+        }
+        renderMarkerTypePicker();
+        setEditorHeaderIcon(startType);
         markerEditor.hidden = false;
         photoLoadToken += 1;
         renderMarkerPhotos(marker);
@@ -2925,7 +3118,8 @@ const renderMarkers = () => {
           floorLevel: document.getElementById('markerFloorLevel').value.trim(),
           location: document.getElementById('markerLocation').value.trim(),
           serviceDate: storeMonthYear(document.getElementById('markerServiceDate').value),
-          manufacturingDate: storeMonthYear(document.getElementById('markerManufacturingDate').value)
+          manufacturingDate: storeMonthYear(document.getElementById('markerManufacturingDate').value),
+          markerType: selectedMarkerType || 'pin'
         };
         const markerId = editingMarkerId || `marker-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         const existingMarker = markers.find((item) => item.id === markerId);
@@ -3578,10 +3772,17 @@ const renderMarkers = () => {
         (markersByLayout.get(layout.id) || []).map((marker) => ({ marker, layout, layoutIndex, project })));
       const devicesEverywhere = () => getActiveProjects().flatMap((project) => devicesInProject(project));
 
-      const deviceBadge = (marker) => el('span', {
-        className: `device-badge${marker.deviceId ? '' : ' is-empty'}`,
-        text: marker.deviceId ? String(marker.deviceId) : '—'
-      });
+      // Badge coloured by marker type: code on top, Device ID below.
+      const deviceBadge = (marker) => {
+        const type = markerTypeOf(marker);
+        const badge = el('span', {
+          className: `device-badge type-${type || 'pin'}${marker.deviceId ? '' : ' is-empty'}`,
+          title: type ? MARKER_TYPES[type].label : 'Marker'
+        });
+        if (type) badge.append(el('small', { className: 'device-badge-code', text: MARKER_TYPES[type].code }));
+        badge.append(el('span', { className: 'device-badge-id', text: marker.deviceId ? String(marker.deviceId) : '—' }));
+        return badge;
+      };
 
       const deviceRow = (entry, { showProject = false, extra = null } = {}) => {
         const { marker, layout, project } = entry;
@@ -3858,7 +4059,7 @@ const renderMarkers = () => {
         if (!deviceListContainer) return;
         const text = deviceFilters.text.trim().toLowerCase();
         const entries = devicesInProject().filter(({ marker }) =>
-          (!deviceFilters.type || marker.deviceType === deviceFilters.type) &&
+          (!deviceFilters.type || (markerTypeOf(marker) || 'pin') === deviceFilters.type) &&
           (!deviceFilters.floor || marker.floorLevel === deviceFilters.floor) &&
           (!deviceFilters.venue || marker.location === deviceFilters.venue) &&
           (!text || [marker.deviceId, marker.product, marker.deviceType, marker.floorLevel, marker.location]
@@ -3900,7 +4101,16 @@ const renderMarkers = () => {
         sidePanelBody.replaceChildren(
           search,
           el('div', { className: 'panel-filters' },
-            filterSelect('type', 'Type', uniqueValues(entries, 'deviceType')),
+            el('label', { className: 'panel-select' },
+              el('span', { text: 'Marker' }),
+              el('select', { onchange: (event) => { deviceFilters.type = event.target.value; renderDeviceList(); } },
+                el('option', { value: '', text: 'All' }),
+                [...MARKER_TYPE_ORDER, 'pin'].filter((type) => entries.some(({ marker }) => (markerTypeOf(marker) || 'pin') === type))
+                  .map((type) => el('option', {
+                    value: type,
+                    selected: deviceFilters.type === type,
+                    text: type === 'pin' ? 'Other' : `${MARKER_TYPES[type].code} · ${MARKER_TYPES[type].label}`
+                  })))),
             filterSelect('floor', 'Floor', uniqueValues(entries, 'floorLevel')),
             filterSelect('venue', 'Venue', uniqueValues(entries, 'location'))),
           deviceCountLabel,
@@ -4018,6 +4228,7 @@ const renderMarkers = () => {
         ['Project', (e) => e.project.name],
         ['Layout', (e) => e.layout.name],
         ['Device ID', (e) => e.marker.deviceId],
+        ['Marker Type', (e) => { const type = markerTypeOf(e.marker); return type ? `${MARKER_TYPES[type].code} – ${MARKER_TYPES[type].label}` : 'Other'; }],
         ['Device Name', (e) => e.marker.product],
         ['Floor Level', (e) => e.marker.floorLevel],
         ['Venue', (e) => e.marker.location],
@@ -4077,7 +4288,7 @@ const renderMarkers = () => {
 </style></head><body>
 <header><div><h1>Device register</h1><p>${escapeHtml(title)} · ${entries.length} devices</p></div>
 <p>MQuest · ${escapeHtml(new Date().toLocaleString('en-GB'))}</p></header>
-<table><thead><tr>${reportColumns.map(([t]) => `<th>${escapeHtml(t)}</th>`).join('')}</tr></thead><tbody>${rows || '<tr><td colspan="10">No devices.</td></tr>'}</tbody></table>
+<table><thead><tr>${reportColumns.map(([t]) => `<th>${escapeHtml(t)}</th>`).join('')}</tr></thead><tbody>${rows || `<tr><td colspan="${reportColumns.length}">No devices.</td></tr>`}</tbody></table>
 </body></html>`);
         win.document.close();
         win.focus();
