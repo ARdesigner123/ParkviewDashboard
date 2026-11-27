@@ -1382,7 +1382,7 @@
       const MARKER_TYPES = {
         fx: { code: 'FX', label: 'Fire Extinguisher', shape: 'Extinguisher' },
         ex: { code: 'EX', label: 'Exit Sign', shape: 'Exit sign' },
-        smd: { code: 'SMD', label: 'Emergency Detector Light', shape: 'Detector' },
+        smd: { code: 'EMD', label: 'Emergency Detector Light', shape: 'Detector' }, // key stays 'smd' (saved data)
         emt: { code: 'EMT', label: 'Emergency Train Light', shape: 'Twin lamp' }
       };
       const MARKER_TYPE_ORDER = ['fx', 'ex', 'smd', 'emt'];
@@ -1393,7 +1393,7 @@
         const t = String(text || '').toLowerCase();
         if (/extinguish|\bfx\b/.test(t)) return 'fx';
         if (/\bexit\b|\bex\b/.test(t)) return 'ex';
-        if (/detector|smoke|\bsmd\b/.test(t)) return 'smd';
+        if (/detector|smoke|\bsmd\b|\bemd\b/.test(t)) return 'smd';
         if (/\bemt\b|emergency|train light|twin/.test(t)) return 'emt';
         return '';
       };
@@ -1460,8 +1460,8 @@
               <circle class="mk-fill mk-outline" cx="24" cy="24" r="22"/>
               <circle class="mk-vents" cx="24" cy="24" r="19.3"/>
               <circle class="mk-label" cx="24" cy="24" r="15.8"/>
-              ${id ? markerCodeText('SMD', 24, 18.4, 8.4, 17) + markerIdText(id, 24, 29.8, 25, 10.5)
-                   : markerCodeText('SMD', 24, 24.5, 10.5, 22)}`);
+              ${id ? markerCodeText('EMD', 24, 18.4, 8.4, 17) + markerIdText(id, 24, 29.8, 25, 10.5)
+                   : markerCodeText('EMD', 24, 24.5, 10.5, 22)}`);
           case 'emt': // twin-lamp emergency light
             return svg('0 0 52 62', `
               <circle class="mk-fill mk-outline" cx="13" cy="12" r="9.5"/>
