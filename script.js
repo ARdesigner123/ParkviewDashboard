@@ -1346,6 +1346,8 @@
           markerSyncErrorAnnounced = false;
           lastCloudSyncAt = Date.now();
           lastCloudSyncFailed = false;
+          markerSyncInProgress = false;
+          await migrateLegacyMarkerTypes();
         } catch (error) {
           console.error('Unable to sync shared markers:', error);
           lastCloudSyncFailed = true;
@@ -1380,7 +1382,7 @@
       const MARKER_TYPES = {
         fx: { code: 'FX', label: 'Fire Extinguisher', shape: 'Extinguisher' },
         ex: { code: 'EX', label: 'Exit Sign', shape: 'Exit sign' },
-        smd: { code: 'SMD', label: 'Emergency Detector Light', shape: 'Detector' },
+        smd: { code: 'EMD', label: 'Emergency Detector Light', shape: 'Detector' }, // key stays 'smd' (saved data)
         emt: { code: 'EMT', label: 'Emergency Train Light', shape: 'Twin lamp' }
       };
       const MARKER_TYPE_ORDER = ['fx', 'ex', 'smd', 'emt'];
@@ -1391,15 +1393,37 @@
         const t = String(text || '').toLowerCase();
         if (/extinguish|\bfx\b/.test(t)) return 'fx';
         if (/\bexit\b|\bex\b/.test(t)) return 'ex';
-        if (/detector|smoke|\bsmd\b/.test(t)) return 'smd';
+        if (/detector|smoke|\bsmd\b|\bemd\b/.test(t)) return 'smd';
         if (/\bemt\b|emergency|train light|twin/.test(t)) return 'emt';
         return '';
       };
       const markerTypeOf = (marker) => {
         if (!marker) return '';
         if (MARKER_TYPES[marker.markerType]) return marker.markerType;
-        if (marker.markerType === 'pin') return '';
-        return inferMarkerType(marker.deviceType);
+        if (marker.markerType === 'pin') return ''; // "Other" was chosen on purpose
+        // Markers from before types existed were fire extinguishers.
+        return inferMarkerType(marker.deviceType) || 'fx';
+      };
+
+      // Save a type on markers created before types existed (editors / owners, once).
+      let legacyTypeMigrationDone = false;
+      const migrateLegacyMarkerTypes = async () => {
+        if (legacyTypeMigrationDone || !isWorkspaceEditor() || !markerCloudInitialized) return;
+        legacyTypeMigrationDone = true;
+        let changed = 0;
+        markersByLayout.forEach((markers) => markers.forEach((marker) => {
+          if (MARKER_TYPES[marker.markerType] || marker.markerType === 'pin') return;
+          marker.markerType = markerTypeOf(marker);
+          changed += 1;
+        }));
+        if (!changed) return;
+        const result = await persistMarkersEverywhere();
+        if (result.cloudSaved) {
+          renderMarkers();
+          announce(`Updated ${changed} older ${changed === 1 ? 'marker' : 'markers'} to the new marker icons.`);
+        } else {
+          legacyTypeMigrationDone = false; // try again on the next sync
+        }
       };
 
       // Device ID text that always fits the space it is given.
@@ -1436,8 +1460,8 @@
               <circle class="mk-fill mk-outline" cx="24" cy="24" r="22"/>
               <circle class="mk-vents" cx="24" cy="24" r="19.3"/>
               <circle class="mk-label" cx="24" cy="24" r="15.8"/>
-              ${id ? markerCodeText('SMD', 24, 18.4, 8.4, 17) + markerIdText(id, 24, 29.8, 25, 10.5)
-                   : markerCodeText('SMD', 24, 24.5, 10.5, 22)}`);
+              ${id ? markerCodeText('EMD', 24, 18.4, 8.4, 17) + markerIdText(id, 24, 29.8, 25, 10.5)
+                   : markerCodeText('EMD', 24, 24.5, 10.5, 22)}`);
           case 'emt': // twin-lamp emergency light
             return svg('0 0 52 62', `
               <circle class="mk-fill mk-outline" cx="13" cy="12" r="9.5"/>
